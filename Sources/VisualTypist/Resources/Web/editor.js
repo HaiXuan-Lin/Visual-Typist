@@ -179,23 +179,65 @@
     mathfield.insert(latex, {
       format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true, feedback: false,
     });
-    startInLowerLimit();
     syncFromField();
     return true;
   }
 
-  /** A newly inserted ∑ or ∫ with limits starts in its lower limit, where the index goes. */
-  function startInLowerLimit() {
+  /**
+   * Inserts a palette item the way classic equation editors do: an accent applies to the symbol
+   * before the caret (or the selection); a template takes the selection into its first slot and
+   * puts the caret in the next one, or at the end of that slot when there is no other.
+   */
+  function insertItem(item) {
+    if (!item) return false;
+    if (codeFocused()) return insertIntoCode(item.latex);
     const model = fieldModel();
-    const atom = model && caretAtom(model);
-    const owner = atom?.parent;
-    if (!model?.selectionIsPlaceholder || atom.parentBranch !== 'superscript' || !LARGE_OPERATORS.has(owner?.type)) return;
-    const lower = branchAtoms(owner, 'subscript').find(child => child.type === 'placeholder');
-    if (lower) selectPlaceholderAt(model.offsetOf(lower));
+    if (!model) return insertLatex(item.latex);
+    const hadSelection = !model.selectionIsCollapsed && !model.selectionIsPlaceholder;
+    if (item.accent) return applyAccent(item.latex, model, hadSelection);
+    insertLatex(item.latex);
+    const target = hadSelection ? item.caretWithSelection : item.caret;
+    if (target) placeCaretInOperator(target);
+    // The selection filled the only slot: keep the caret at the end of that slot.
+    else if (hadSelection && item.latex.includes('#0') && !fieldModel()?.selectionIsPlaceholder) mathfield.executeCommand('moveToPreviousChar');
+    syncFromField();
+    return true;
   }
 
-  function insertItem(item) {
-    return item ? insertLatex(item.latex) : false;
+  /** Wraps the selection, or the one symbol (or structure) before the caret, in an accent. */
+  function applyAccent(template, model, hadSelection) {
+    let range;
+    if (hadSelection) {
+      range = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    } else {
+      const before = model.at(model.position);
+      if (model.selectionIsPlaceholder || !before || before.type === 'first') return true; // Nothing to accent.
+      range = [model.position - (before.children?.length ?? 0) - 1, model.position];
+    }
+    const argument = mathfield.getValue(range[0], range[1], 'latex');
+    mathfield.selection = { ranges: [range] };
+    mathfield.insert(template.replace(/#0/, argument),
+      { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    syncFromField();
+    return true;
+  }
+
+  /** After inserting scripts, ∑ or ∫: put the caret in the lower or upper slot, or the operand. */
+  function placeCaretInOperator(target) {
+    const model = fieldModel();
+    const atom = model && caretAtom(model);
+    const operator = LARGE_OPERATORS.has(atom?.parent?.type) || SCRIPT_BRANCHES.includes(atom?.parentBranch) ? atom.parent
+      : LARGE_OPERATORS.has(atom?.leftSibling?.type) ? atom.leftSibling : null;
+    if (!operator) return;
+    if (target === 'operand') {
+      const operand = operator.rightSibling;
+      if (operand?.type === 'placeholder') selectPlaceholderAt(model.offsetOf(operand));
+      else mathfield.position = model.offsetOf(operand ?? operator);
+      return;
+    }
+    const branch = target === 'lower' ? 'subscript' : 'superscript';
+    const atoms = branchAtoms(operator, branch);
+    if (atoms.length) moveCaretTo(model.offsetOf(atoms.at(-1)));
   }
 
   /** Inserts LaTeX as text in the code editor; the caret lands in the first empty slot. */
@@ -511,7 +553,11 @@
 
   /** Empty slots are an editing aid; in LaTeX they are empty groups, as classic editors write them. */
   function withoutPlaceholders(latex) {
-    return latex.replace(/\{\\placeholder\{\}\}/g, '{}').replace(/\\placeholder\{\}/g, '{}');
+    return latex
+      .replace(/\{\\placeholder\{\}\}/g, '{}')
+      // Between \left, \middle and \right an empty slot is simply empty.
+      .replace(/\\placeholder\{\}(?=\s*\\(?:right|middle)(?![a-zA-Z]))/g, '')
+      .replace(/\\placeholder\{\}/g, '{}');
   }
 
   /** Rewrites MathLive output that standard LaTeX (and MathJax) rejects, e.g. `\middle{|}` or `\bm`. */

@@ -12,6 +12,10 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
   upper ↔ lower limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a
   second ⌫ deletes it — an emptied script is selected, then removed while its base stays.
+- **Templates and accents behave like a classic editor's buttons:** an accent (`⌘H` hat, `⌘D` dot,
+  `⌥T` vector…) applies to the symbol before the caret or to the selection; a template takes the
+  selection into its first slot and puts the caret in the next one (a selected expression
+  becomes the integrand of `⇧⌘I`, the lower limit of `⇧⌘S`, the numerator of `⌘F`).
 - **300+ symbols and templates** in 13 tabs: Greek, fractions & scripts, operators, relations,
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, functions, matrices and arrows — integrals, operators and matrices in large,
@@ -57,7 +61,7 @@ LaTeX.
 | (▢\|▢) | `⌥9` | | Sum with limits | `⇧⌘S` |
 | ′ (prime) | `⌘'` | | Dot / double dot accent | `⌘D` / `⇧⌘D` |
 | ⟨▢\| (bra) | `⌥B` | | Hat | `⌘H` |
-| \|▢⟩ (ket) | `⌥K` | | ↔ over | `⌥T` |
+| \|▢⟩ (ket) | `⌥K` | | Vector arrow | `⌥T` |
 
 | Editing | Shortcut |
 | --- | --- |
