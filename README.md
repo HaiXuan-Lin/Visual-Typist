@@ -6,6 +6,9 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
 
 - **Visual editing** on top, **symbol palette** below — or flip the bottom pane to the
   **LaTeX code** (`⌃⇥`). Both stay in sync as you type.
+- **Structured editing like a classic equation editor:** every empty slot keeps its placeholder
+  box, ↑/↓ move between slots (numerator ↔ denominator, upper ↔ lower limit, matrix rows), and
+  ⌫ in an empty slot steps back or removes the structure once all its slots are empty.
 - **300+ symbols and templates** in 12 tabs: Greek, fractions & scripts, operators, relations,
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, matrices and arrows.
@@ -35,20 +38,21 @@ Keys are matched by position, so `⌥K` works even though macOS would normally t
 
 | Insert | Shortcut | | Insert | Shortcut |
 | --- | --- | --- | --- | --- |
-| α | `⌥A` | | Fraction | `⌃F` |
-| γ | `⌥G` | | Square root | `⌃R` |
+| γ | `⌥G` | | Fraction | `⌃F` |
+| ∞ | `⌥I` | | Square root | `⌃R` |
 | π | `⌃P` | | Superscript | `⌃Q` |
 | ω | `⌃O` | | Subscript | `⌃E` |
 | ψ | `⌥⇧P` | | Sub- and superscript | `⌃J` |
 | ∂ | `⌃⇧P` | | Integral with limits | `⌃⇧I` |
-| ∞ | `⌥I` | | Sum with limits | `⌃⇧S` |
+| (▢\|▢) | `⌥9` | | Sum with limits | `⌃⇧S` |
 | ′ (prime) | `⌃'` | | Dot / double dot accent | `⌃D` / `⌃⇧D` |
 | ⟨▢\| (bra) | `⌥B` | | Wide hat | `⌃H` |
 | \|▢⟩ (ket) | `⌥K` | | ↔ over | `⌥T` |
-| ⟨▢\|▢⟩ | `⌥D` | | (▢\|▢) | `⌥9` |
 
 | Editing | Shortcut |
 | --- | --- |
+| Move up / down / left / right | `⌥W` `⌥S` `⌥A` `⌥D` (or the arrow keys) |
+| Move to start / end of line | `⌥Q` / `⌥L` |
 | Switch between symbols and LaTeX code | `⌃⇥` |
 | Apply the LaTeX code and return to the equation | `⇧↩` |
 | Type the next letter in Greek (⇧ for capitals) | `⌃G`, then a letter |
@@ -56,6 +60,10 @@ Keys are matched by position, so `⌥K` works even though macOS would normally t
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
 | Matrix: delete row / column | `⌃⌥↑` / `⌃⌥←` |
 | Copy LaTeX / copy as image | `⌥⌘C` / `⇧⌘C` |
+
+While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
+keyboard layout so letters arrive as math; your input method returns in the LaTeX pane, where
+you can type CJK text inside `\text{}`.
 
 Your changes are saved to `~/Library/Application Support/Visual Typist/shortcuts.json`, layered
 over the defaults in [`keymap.js`](Sources/VisualTypist/Resources/Web/keymap.js). The file can be

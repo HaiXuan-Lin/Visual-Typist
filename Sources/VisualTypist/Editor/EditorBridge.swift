@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import WebKit
 import VisualTypistCore
 
@@ -83,6 +84,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             if let document = Self.document(from: body) { onChange?(document) }
         case "shortcuts":
             webView.interceptedCombos = Set(body["combos"] as? [String] ?? [])
+        case "focus":
+            webView.restrictsToRomanInput = body["math"] as? Bool ?? false
         case "recording":
             webView.isRecordingShortcut = body["active"] as? Bool ?? false
         case "saveShortcuts":
@@ -171,11 +174,64 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 /// before macOS turns them into characters or dead keys (Option-E, Option-I, Option-U…).
 final class EditorWebView: WKWebView {
     var interceptedCombos: Set<String> = []
+
+    /// While the visual editor has focus, an input method (Pinyin, Kana…) is swapped for a keyboard
+    /// layout: composed text would otherwise arrive as text-mode characters instead of math. The
+    /// previous input source returns when the LaTeX pane gets focus or the app is deactivated.
+    var restrictsToRomanInput = false {
+        didSet { updateInputSource() }
+    }
+
+    private var replacedInputSource: TISInputSource?
+    private var activationObservers: [NSObjectProtocol] = []
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard activationObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
+            activationObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateInputSource() }
+            })
+        }
+        for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
+            activationObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.restoreInputSource() }
+            })
+        }
+    }
+
+    private func updateInputSource() {
+        guard restrictsToRomanInput, NSApp.isActive, window?.isKeyWindow == true else {
+            restoreInputSource()
+            return
+        }
+        let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        guard Self.isInputMethod(current),
+              let layout = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue() else { return }
+        replacedInputSource = current
+        TISSelectInputSource(layout)
+    }
+
+    private func restoreInputSource() {
+        guard let source = replacedInputSource else { return }
+        replacedInputSource = nil
+        TISSelectInputSource(source)
+    }
+
+    private static func isInputMethod(_ source: TISInputSource) -> Bool {
+        guard let pointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceType) else { return false }
+        let type = Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue()
+        return type != kTISTypeKeyboardLayout
+    }
+
     var isRecordingShortcut = false
     var onShortcut: ((String) -> Void)?
 
     override func keyDown(with event: NSEvent) {
         if handleShortcut(event) { return }
+        // macOS may restore the app's remembered input method after activation; check per key.
+        if restrictsToRomanInput { updateInputSource() }
         super.keyDown(with: event)
     }
 

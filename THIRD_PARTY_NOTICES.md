@@ -9,3 +9,7 @@ Visual Typist bundles these open-source components in `Sources/VisualTypist/Reso
 
 MathLive includes the KaTeX fonts (MIT). The exact versions are recorded in `vendor/versions.json`
 and can be refreshed with `scripts/update-vendor.sh`.
+
+The app icon's letterform is the capital V of Ralph Smith's Formal Script (RSFS, the font behind
+LaTeX's `\mathscr`), distributed with TeX Live under a free license; `scripts/make-icon.py` holds
+the outline and renders the icon.

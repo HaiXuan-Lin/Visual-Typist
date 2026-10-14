@@ -17,7 +17,7 @@
 
   let mathfield = null;
   let scratchField = null;
-  let overrides = sanitizeOverrides(window.VT_USER_SHORTCUTS || {});
+  let overrides = {};
   let keymap = {};
   let greekPending = false;
   let recording = null;
@@ -218,6 +218,12 @@
     addColumnAfter: () => matrixCommand('addColumnAfter'),
     removeRow: () => matrixCommand('removeRow'),
     removeColumn: () => matrixCommand('removeColumn'),
+    cursorUp: () => moveCaret('up'),
+    cursorDown: () => moveCaret('down'),
+    cursorLeft: () => moveCaret('left'),
+    cursorRight: () => moveCaret('right'),
+    lineStart: () => moveCaret('lineStart'),
+    lineEnd: () => moveCaret('lineEnd'),
     undo: () => { mathfield?.executeCommand('undo'); syncFromField(); return true; },
     redo: () => { mathfield?.executeCommand('redo'); syncFromField(); return true; },
   };
@@ -229,6 +235,8 @@
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
     addColumnBefore: 'Matrix: insert column before', addColumnAfter: 'Matrix: insert column after',
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
+    cursorUp: 'Move up', cursorDown: 'Move down', cursorLeft: 'Move left', cursorRight: 'Move right',
+    lineStart: 'Move to start of line', lineEnd: 'Move to end of line',
   };
 
   function setGreekPending(active) {
@@ -300,8 +308,216 @@
       (_, delimiter) => `\\middle${delimiter}${/^\\[a-zA-Z]+$/.test(delimiter) ? ' ' : ''}`);
   }
 
+  // ---------------------------------------------------------------- structural editing
+  //
+  // Classic equation-editor behavior on top of MathLive: every empty slot shows a placeholder box,
+  // Backspace in an empty slot steps out of (or removes) its structure, and the up/down arrows
+  // move the caret to the nearest slot above or below. These use MathLive's internal model
+  // (the bundled version is pinned); each helper degrades to MathLive's default if it is missing.
+
+  const SCRIPT_BRANCHES = ['superscript', 'subscript'];
+  let restoringPlaceholders = false;
+  let PlaceholderAtom = null;
+
+  function fieldModel() {
+    const model = mathfield?._mathfield?.model;
+    return model && typeof model.offsetOf === 'function' && model.root ? model : null;
+  }
+
+  function placeholderClass() {
+    if (!PlaceholderAtom && scratchField) {
+      scratchField.setValue('\\placeholder{}', { silenceNotifications: true });
+      PlaceholderAtom = scratchField._mathfield?.model?.root?.body?.find(atom => atom.type === 'placeholder')?.constructor ?? null;
+    }
+    return PlaceholderAtom;
+  }
+
+  const sameBranch = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const branchAtoms = (atom, branch) => { try { return atom.branch(branch) ?? []; } catch (_) { return []; } };
+  const isSlotEmpty = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first' || child.type === 'placeholder');
+  const hasNoAtoms = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first');
+
+  /** The slots that belong together with `branch`: scripts pair with scripts, other branches with each other. */
+  function siblingSlots(atom, branch) {
+    const script = SCRIPT_BRANCHES.includes(branch);
+    return (atom.branches ?? []).filter(other => SCRIPT_BRANCHES.includes(other) === script);
+  }
+
+  /** Puts a placeholder into every empty slot. Returns true if anything changed. */
+  function restorePlaceholders() {
+    const model = fieldModel();
+    const Placeholder = placeholderClass();
+    if (!model || !Placeholder || restoringPlaceholders || !model.selectionIsCollapsed) return false;
+    const caretAtom = model.at(model.position);
+    let caretPlaceholder = null;
+    let changed = false;
+    for (const atom of model.atoms) {
+      // Empty groups ({} before prescripts) and text are intentionally empty.
+      if (atom.isRoot || atom.type === 'group' || atom.mode === 'text' || !atom.branches?.length) continue;
+      for (const branch of atom.branches) {
+        if (!hasNoAtoms(atom, branch)) continue;
+        const placeholder = new Placeholder();
+        atom.addChild(placeholder, branch);
+        changed = true;
+        if (caretAtom?.type === 'first' && caretAtom.parent === atom && sameBranch(caretAtom.parentBranch, branch)) {
+          caretPlaceholder = placeholder;
+        }
+      }
+    }
+    if (!changed) return false;
+    restoringPlaceholders = true;
+    try {
+      model.contentDidChange({ inputType: 'insertText' });
+      if (caretPlaceholder) selectPlaceholderAt(model.offsetOf(caretPlaceholder));
+      else mathfield.position = model.offsetOf(caretAtom);
+    } finally {
+      restoringPlaceholders = false;
+    }
+    return true;
+  }
+
+  function selectPlaceholderAt(offset) {
+    mathfield.selection = { ranges: [[offset - 1, offset]] };
+  }
+
+  /** Moves to `offset`, selecting an adjacent placeholder so typing replaces it. */
+  function moveCaretTo(offset) {
+    const model = fieldModel();
+    const next = model.at(offset + 1);
+    if (model.at(offset)?.type === 'placeholder') selectPlaceholderAt(offset);
+    else if (next?.type === 'placeholder' && next.parent === model.at(offset)?.parent) selectPlaceholderAt(offset + 1);
+    else mathfield.position = offset;
+  }
+
+  /** The slot (owner atom and branch) whose only content is the caret or a selected placeholder. */
+  function emptySlotAtCaret(model) {
+    const [start, end] = model.selection.ranges[0];
+    const atom = model.selectionIsPlaceholder ? model.at(Math.max(start, end))
+      : start === end ? model.at(model.position) : null;
+    if (!atom || !['first', 'placeholder'].includes(atom.type)) return null;
+    const owner = atom.parent;
+    if (!owner || owner.isRoot || !isSlotEmpty(owner, atom.parentBranch)) return null;
+    return { owner, branch: atom.parentBranch };
+  }
+
+  /**
+   * Backspace in an empty slot of a multi-slot structure (fraction, limits, matrix…): moves to the
+   * previous slot, or removes the structure once all of its slots are empty. Single-slot structures
+   * use MathLive's own behavior, which already removes them.
+   */
+  function backspaceInEmptySlot() {
+    const model = fieldModel();
+    if (!model) return false;
+    const slot = emptySlotAtCaret(model);
+    if (!slot) return false;
+    const { owner, branch } = slot;
+    const slots = siblingSlots(owner, branch);
+    if (slots.length <= 1) return false;
+    if (slots.some(other => !isSlotEmpty(owner, other))) {
+      mathfield.position = model.offsetOf(branchAtoms(owner, branch)[0]);
+      mathfield.executeCommand('moveToPreviousChar');
+      return true;
+    }
+    restoringPlaceholders = true;
+    try {
+      if (SCRIPT_BRANCHES.includes(branch)) {
+        for (const script of slots) owner.removeBranch(script);
+        model.contentDidChange({ inputType: 'deleteContentBackward' });
+        mathfield.position = model.offsetOf(owner);
+      } else {
+        const previous = owner.leftSibling;
+        owner.parent.removeChild(owner);
+        model.contentDidChange({ inputType: 'deleteContentBackward' });
+        mathfield.position = previous ? model.offsetOf(previous) : 0;
+      }
+    } finally {
+      restoringPlaceholders = false;
+    }
+    syncFromField();
+    return true;
+  }
+
+  function caretPoint(model, offset) {
+    const atom = model.at(offset);
+    const element = atom && mathfield._mathfield.getHTMLElement?.(atom);
+    if (!element) return null;
+    const box = element.getBoundingClientRect();
+    return { x: atom.type === 'first' ? box.left : box.right, y: box.top + box.height / 2 };
+  }
+
+  /** Moves the caret to the nearest position above (direction -1) or below (+1). */
+  function moveVertically(direction) {
+    const model = fieldModel();
+    if (!model || (!model.selectionIsCollapsed && !model.selectionIsPlaceholder)) return false;
+    const origin = caretPoint(model, model.position);
+    if (!origin) return false;
+    // Rows that enclose the caret (e.g. the line around a fraction, seen from its numerator) are
+    // considered only when no slot lies in that direction, so ↓ in a numerator reaches the denominator.
+    const here = model.at(model.position);
+    const enclosing = new Set();
+    for (let atom = here.parent?.parent; atom; atom = atom.parent) enclosing.add(atom);
+    const candidates = [];
+    for (let offset = 0; offset <= model.lastOffset; offset += 1) {
+      const atom = model.at(offset);
+      // Positions in the caret's own row are never above or below it, even next to a tall ∫ or Σ.
+      if (atom.parent === here.parent && sameBranch(atom.parentBranch, here.parentBranch)) continue;
+      const point = caretPoint(model, offset);
+      if (!point) continue;
+      const distance = (point.y - origin.y) * direction;
+      if (distance < 4) continue;
+      // Prefer positions straight above or below: horizontal distance counts double.
+      const score = distance + 2 * Math.abs(point.x - origin.x);
+      candidates.push({ offset, score, outer: enclosing.has(atom.parent) });
+    }
+    const best = (list => list.reduce((a, b) => (b.score < a.score ? b : a), list[0]))(
+      candidates.some(candidate => !candidate.outer) ? candidates.filter(candidate => !candidate.outer) : candidates);
+    if (!best) return false;
+    moveCaretTo(best.offset);
+    return true;
+  }
+
+  function moveInCode(command) {
+    const { value, selectionStart } = codeArea;
+    const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1;
+    const lineEnd = (index => index < 0 ? value.length : index)(value.indexOf('\n', selectionStart));
+    const column = selectionStart - lineStart;
+    let caret = selectionStart;
+    if (command === 'left') caret = Math.max(0, selectionStart - 1);
+    if (command === 'right') caret = Math.min(value.length, selectionStart + 1);
+    if (command === 'lineStart') caret = lineStart;
+    if (command === 'lineEnd') caret = lineEnd;
+    if (command === 'up' && lineStart > 0) {
+      const previousStart = value.lastIndexOf('\n', lineStart - 2) + 1;
+      caret = Math.min(previousStart + column, lineStart - 1);
+    }
+    if (command === 'down' && lineEnd < value.length) {
+      const nextEnd = (index => index < 0 ? value.length : index)(value.indexOf('\n', lineEnd + 1));
+      caret = Math.min(lineEnd + 1 + column, nextEnd);
+    }
+    codeArea.setSelectionRange(caret, caret);
+    return true;
+  }
+
+  function moveCaret(command) {
+    if (codeFocused()) return moveInCode(command);
+    if (!mathfield) return false;
+    mathfield.focus();
+    if (command === 'up' || command === 'down') {
+      if (!moveVertically(command === 'up' ? -1 : 1) && !fieldModel()) {
+        mathfield.executeCommand(command === 'up' ? 'moveUp' : 'moveDown');
+      }
+      return true;
+    }
+    mathfield.executeCommand({
+      left: 'moveToPreviousChar', right: 'moveToNextChar',
+      lineStart: 'moveToMathfieldStart', lineEnd: 'moveToMathfieldEnd',
+    }[command]);
+    return true;
+  }
+
   function syncFromField() {
     if (!mathfield) return;
+    if (!restoringPlaceholders) restorePlaceholders();
     const latex = portableLatex(mathfield.getValue('latex'));
     if (latex === state.latex) return;
     state.latex = latex;
@@ -584,6 +800,19 @@
         return;
       }
     }
+    const plain = !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+    const inField = mathfield && event.composedPath().includes(mathfield);
+    if (plain && inField) {
+      const handled = key === 'backspace' ? backspaceInEmptySlot()
+        // With nothing above or below, the caret stays where it is.
+        : key === 'up' ? (moveVertically(-1), !!fieldModel())
+        : key === 'down' ? (moveVertically(1), !!fieldModel()) : false;
+      if (handled) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+    }
     const combo = comboFromEvent(event);
     if (!combo || !keymap[combo]) return;
     if (runShortcut(combo)) {
@@ -698,6 +927,7 @@
       .map(name => handlers.retrieve(name)).filter(map => map?.map instanceof Map);
 
     applyPresentation();
+    overrides = sanitizeOverrides(window.VT_USER_SHORTCUTS || {});
     rebuildKeymap();
     let category = VT_PALETTE[0].id;
     try { category = localStorage.getItem('vt.category') || category; } catch (_) { /* Optional. */ }
@@ -765,6 +995,14 @@
       mathfield?.executeCommand('moveToMathfieldEnd');
     }
   });
+
+  // WebKit's default menu offers Reload, which would discard the equation; keep it for text fields only.
+  document.addEventListener('contextmenu', event => {
+    if (!event.target.closest('textarea, input')) event.preventDefault();
+  });
+
+  // The native host limits input methods to Roman keyboards while the equation has focus.
+  document.addEventListener('focusin', () => post('focus', { math: document.activeElement?.tagName === 'MATH-FIELD' }));
 
   codeArea.addEventListener('input', () => {
     clearTimeout(codeTimer);

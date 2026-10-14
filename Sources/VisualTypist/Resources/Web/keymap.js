@@ -11,7 +11,6 @@
 
 window.VT_DEFAULT_KEYMAP = {
   // Symbols and structures
-  'alt+a': { insert: 'alpha' },
   'alt+g': { insert: 'gamma' },
   'ctrl+p': { insert: 'pi' },
   'ctrl+o': { insert: 'omega' },
@@ -30,10 +29,17 @@ window.VT_DEFAULT_KEYMAP = {
   'alt+t': { insert: 'overleftrightarrow' },
   'alt+b': { insert: 'bra' },
   'alt+k': { insert: 'ket' },
-  'alt+d': { insert: 'braket' },
   'alt+9': { insert: 'paren-mid' },
   'ctrl+shift+i': { insert: 'int-limits' },
   'ctrl+shift+s': { insert: 'sum-limits' },
+
+  // Caret movement
+  'alt+w': { command: 'cursorUp' },
+  'alt+s': { command: 'cursorDown' },
+  'alt+a': { command: 'cursorLeft' },
+  'alt+d': { command: 'cursorRight' },
+  'alt+q': { command: 'lineStart' },
+  'alt+l': { command: 'lineEnd' },
 
   // Editing
   'ctrl+tab': { command: 'toggleMode' },
