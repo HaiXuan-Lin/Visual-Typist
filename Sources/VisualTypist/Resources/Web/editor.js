@@ -491,6 +491,7 @@
       field.setAttribute('aria-label', 'Equation line');
       field.addEventListener('input', syncFromField);
       field.addEventListener('selection-change', () => {
+        if (composing?.mode === 'math') return;
         if (field === mathfield && !restoringPlaceholders && restorePlaceholders()) syncFromField();
       });
       field.addEventListener('focusin', () => { mathfield = field; });
@@ -551,7 +552,7 @@
 
   /** Shows `latex` (lines separated by newlines) in the editor. */
   async function setDocumentLatex(latex) {
-    if (composing?.mode === 'math') closeComposition();
+    if (composing?.mode === 'math') closeComposition({ keepPreedit: true }); // The content is replaced anyway.
     const parts = splitLines(cleanLatex(latex));
     loading = true;
     try {
@@ -1026,7 +1027,7 @@
   // ---------------------------------------------------------------- synchronization
 
   function syncFromField() {
-    if (!mathfield || loading) return;
+    if (!mathfield || loading || composing?.mode === 'math') return;
     if (!restoringPlaceholders) restorePlaceholders();
     const latex = documentLatex();
     if (latex === state.latex) return;
@@ -1432,16 +1433,12 @@
     let caretX;
     let lineBottom;
     if (composing.mode === 'math') {
+      updateInlinePreedit();
       const model = fieldModel();
-      const point = model && caretPoint(model, model.position);
+      const point = model && caretPoint(model, composing.start ?? model.position);
       const fieldBox = mathfield.getBoundingClientRect();
-      const fontSize = parseFloat(getComputedStyle(mathfield).fontSize);
       caretX = point?.x ?? fieldBox.left;
-      preedit.hidden = false;
-      preedit.style.setProperty('--preedit-size', `${Math.round(fontSize * 0.8)}px`);
-      preedit.textContent = `\\${composing.text}`;
-      preedit.style.left = `${caretX}px`;
-      preedit.style.top = `${(point?.y ?? fieldBox.top + fieldBox.height / 2) - preedit.offsetHeight / 2}px`;
+      preedit.hidden = true;
       lineBottom = fieldBox.bottom;
     } else {
       const point = textareaCaretPoint(codeArea, composing.start);
@@ -1471,13 +1468,56 @@
   }
 
   function startComposition(mode, text = '', start = 0) {
-    composing = { mode, text, page: 0, list: [], start };
+    composing = { mode, text, page: 0, list: [], start: mode === 'math' ? null : start };
     renderCandidates();
   }
 
-  function closeComposition() {
+  /**
+   * In the equation the typed command is real, temporary content: blue raw text such as \mu that
+   * takes the place of the slot or selection, as classic editors show it. It is never reported to
+   * the document; choosing a candidate or cancelling removes it.
+   */
+  function updateInlinePreedit() {
+    if (composing.preedit === composing.text) return;
+    const model = fieldModel();
+    if (!model) return;
+    if (composing.start === null) {
+      const [first] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+      composing.start = model.selectionIsCollapsed ? model.position : first;
+      composing.field = mathfield;
+    } else {
+      mathfield.selection = { ranges: [[composing.start, composing.end]] };
+    }
+    const color = matchMedia('(prefers-color-scheme: dark)').matches ? '#6ea8ff' : '#2f6fe4';
+    const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
+    mathfield.insert(`\\textcolor{${color}}{${raw}}`,
+      { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    composing.end = mathfield.position;
+    composing.preedit = composing.text;
+  }
+
+  function removeInlinePreedit(state) {
+    if (state?.mode !== 'math' || state.end === undefined || !state.field?.isConnected) return;
+    state.field.focus();
+    mathfield = state.field;
+    const model = fieldModel();
+    const first = model.at(state.start);
+    const fillsSlot = first?.type === 'first' && !first.parent?.isRoot && !model.at(state.end)?.rightSibling;
+    mathfield.selection = { ranges: [[state.start, state.end]] };
+    if (fillsSlot) {
+      // Deleting a slot's whole content would delete its structure: put the empty slot back instead.
+      mathfield.insert('\\placeholder{}', { format: 'latex', insertionMode: 'replaceSelection', feedback: false });
+      selectPlaceholderAt(state.start + 1);
+    } else {
+      mathfield.executeCommand('deleteBackward');
+    }
+  }
+
+  function closeComposition({ keepPreedit = false } = {}) {
+    const state = composing;
     composing = null;
     $('candidates').hidden = true;
+    if (!keepPreedit) removeInlinePreedit(state);
   }
 
   function chooseCandidate(entry) {
