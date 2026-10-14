@@ -18,6 +18,7 @@
   --tint-amber: #f3ead8;
   --vt-slot: #c6e4fb;
   --vt-slot-active: #9ccff5;
+  --vt-caret: var(--text);
   --line-rule: #d6d8ea;
   --tile-w: 56px;
   --tile-h: 48px;
@@ -146,7 +147,8 @@ math-field::part(container) { padding: 0; }
 .group[data-tint="violet"] { --tint: var(--tint-violet); }
 .group[data-tint="amber"] { --tint: var(--tint-amber); }
 .tile {
-  position: relative; border: 0; padding: 6px 7px 13px; background: var(--tint); color: var(--text); font-size: 16px;
+  position: relative; width: 100%; height: 100%; border: 0; padding: 6px 7px 13px;
+  background: var(--tint); color: var(--text); font-size: 16px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 .group .tile:first-child { border-top-left-radius: 6px; }
@@ -154,6 +156,12 @@ math-field::part(container) { padding: 0; }
 .tile:active { filter: brightness(.88); }
 @media (prefers-color-scheme: dark) { .tile:hover { filter: brightness(1.2); } .tile:active { filter: brightness(1.35); } }
 .tile svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+/* Integrals, large operators, matrices: tiles two rows tall and half again as wide, display style. */
+.group.large {
+  grid-template-columns: repeat(var(--columns), calc(var(--tile-w) * 1.5));
+  grid-template-rows: repeat(2, calc(var(--tile-h) * 2 + 1px));
+}
+.group.large .tile { font-size: 20px; padding: 8px 9px 15px; }
 /* The shortcut sits in its own strip along the bottom edge, below the glyph's padding box. */
 .tile .key {
   position: absolute; left: 2px; right: 3px; bottom: 1px; text-align: right;
@@ -161,34 +169,6 @@ math-field::part(container) { padding: 0; }
 }
 
 #code-pane { display: flex; flex-direction: column; height: 100%; }
-
-#tabs { display: flex; gap: 2px; padding: 5px 8px 0; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; border-bottom: 1px solid var(--chrome-border); }
-#tabs::-webkit-scrollbar { display: none; }
-#tabs button {
-  flex-shrink: 0; height: 25px; padding: 0 12px; border: 1px solid transparent; border-bottom: 0;
-  border-radius: 6px 6px 0 0; background: transparent; color: var(--secondary);
-  font: 14px "Times New Roman", Times, serif; white-space: nowrap;
-}
-#tabs button:hover { color: var(--text); background: var(--button-hover); }
-#tabs button[aria-selected="true"] { color: var(--text); background: var(--page); border-color: var(--chrome-border); margin-bottom: -1px; }
-
-#grid { flex: 1; overflow: auto; padding: 8px 10px 10px; background: var(--page); }
-.tiles { display: grid; grid-template-columns: repeat(var(--columns), minmax(38px, 1fr)); gap: 1px; padding: 1px; border-radius: 6px; background: var(--tile-border); max-width: calc(var(--columns) * 64px); }
-.tiles[data-tint="blue"] { --tint: var(--tint-blue); }
-.tiles[data-tint="rose"] { --tint: var(--tint-rose); }
-.tiles[data-tint="green"] { --tint: var(--tint-green); }
-.tiles[data-tint="violet"] { --tint: var(--tint-violet); }
-.tiles[data-tint="amber"] { --tint: var(--tint-amber); }
-.tile {
-  position: relative; height: 44px; border: 0; padding: 2px; background: var(--tint);
-  display: flex; align-items: center; justify-content: center; overflow: hidden; font-size: 15px;
-}
-.tiles .tile:first-child { border-top-left-radius: 5px; }
-.tile:hover { filter: brightness(.95); }
-.tile:active { filter: brightness(.88); }
-@media (prefers-color-scheme: dark) { .tile:hover { filter: brightness(1.18); } .tile:active { filter: brightness(1.32); } }
-.tile svg { max-width: 100%; max-height: 40px; }
-.tile .key { position: absolute; right: 3px; bottom: 1px; font-size: 9px; color: var(--secondary); font-family: -apple-system, sans-serif; }
 
 #code-pane { background: var(--page); }
 #code {

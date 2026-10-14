@@ -394,13 +394,22 @@
   const FIELD_CSS = `
     .vt-slot { color: transparent !important; background: linear-gradient(var(--vt-slot), var(--vt-slot)) center / 58% 74% no-repeat !important; }
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
-    .ML__container:has(.vt-slot-active) .ML__selection { display: none !important; }
+    .vt-slot-selected .ML__selection { display: none !important; }
+    /* A caret inside the slot that has it, at the block's left edge. */
+    .vt-slot-active { position: relative; }
+    .ML__focused .vt-slot-active::after {
+      content: ''; position: absolute; left: 21%; top: 13%; bottom: 13%; width: max(1.5px, .055em);
+      background: var(--vt-caret); animation: vt-caret-blink 1.06s steps(1) infinite;
+    }
+    @keyframes vt-caret-blink { 50% { opacity: 0; } }
   `;
 
   /** Marks MathLive's placeholder glyphs (▢) so the stylesheet above can repaint them. */
   function tagSlots(field) {
     // "Active" only when the selection is exactly one slot, not a larger selection containing slots.
     const slotSelected = !!fieldModel(field)?.selectionIsPlaceholder;
+    // A class rather than :has(), which WebKit does not re-evaluate inside MathLive's shadow root.
+    field.shadowRoot.querySelector('.ML__container')?.classList.toggle('vt-slot-selected', slotSelected);
     for (const element of field.shadowRoot.querySelectorAll('.ML__content span')) {
       const isSlot = element.childElementCount === 0 && element.textContent === '▢';
       element.classList.toggle('vt-slot', isSlot);
@@ -1056,13 +1065,16 @@
       group.dataset.category = category.id;
       group.dataset.tint = category.tint;
       group.setAttribute('aria-label', category.title);
-      group.style.setProperty('--columns', Math.ceil(category.items.length / 4)); // Four rows, filled row by row.
+      const large = category.size === 'large';
+      group.classList.toggle('large', large);
+      // Four rows (two for large tiles), filled row by row.
+      group.style.setProperty('--columns', Math.ceil(category.items.length / (large ? 2 : 4)));
       group.style.setProperty('--tint', `var(--tint-${category.tint})`);
       for (const item of category.items) {
         const tile = document.createElement('button');
         tile.className = 'tile';
         tile.dataset.id = item.id;
-        tile.append(glyph(previewLatex(item)));
+        tile.append(glyph((large ? '\\displaystyle ' : '') + previewLatex(item)));
         const key = document.createElement('span');
         key.className = 'key';
         tile.append(key);

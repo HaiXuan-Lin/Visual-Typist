@@ -27,7 +27,7 @@ window.VT_DEFAULT_KEYMAP = {
   'cmd+j': { insert: 'subsup' },
   'cmd+d': { insert: 'dot' },
   'cmd+shift+d': { insert: 'ddot' },
-  'cmd+h': { insert: 'widehat' },
+  'cmd+h': { insert: 'hat' },
   'alt+t': { insert: 'overleftrightarrow' },
   'alt+b': { insert: 'bra' },
   'alt+k': { insert: 'ket' },

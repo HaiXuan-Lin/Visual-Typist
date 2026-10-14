@@ -2,7 +2,8 @@
 // Symbol palette. Each item is [id, latex] or [id, latex, options].
 //
 // In `latex`, #0 is the current selection (or the first empty slot), #1, #2… are further
-// slots and #@ is the selection or the atom before the caret. A leading ^ or _ attaches the
+// slots and #@ is the selection or the atom before the caret. Categories with size 'large' show
+// bigger tiles with display-style glyphs. A leading ^ or _ attaches the
 // script to the atom before the caret. `options.preview` overrides the button glyph.
 
 (() => {
@@ -95,7 +96,7 @@
       ],
     },
     {
-      id: 'braces', title: 'Over & Under', icon: '\\overbrace{\\square\\,\\square}', tint: 'rose',
+      id: 'braces', title: 'Over & Under', icon: '\\overbrace{\\square\\,\\square}', tint: 'rose', size: 'large',
       items: [
         ['overbrace', '\\overbrace{#0}^{#1}'],
         ['underbrace', '\\underbrace{#0}_{#1}'],
@@ -131,7 +132,7 @@
       ],
     },
     {
-      id: 'integrals', title: 'Integrals', icon: '\\int\\!\\oint\\!\\iint', tint: 'violet',
+      id: 'integrals', title: 'Integrals', icon: '\\int\\!\\oint\\!\\iint', tint: 'violet', size: 'large',
       items: [
         ['int', '\\int'], ['iint', '\\iint'], ['iiint', '\\iiint'], ['oint', '\\oint'],
         ['int-limits', '\\int_{#1}^{#2} #0'],
@@ -147,7 +148,7 @@
       ],
     },
     {
-      id: 'bigops', title: 'Large Operators & Functions', icon: '\\textstyle\\sum\\prod\\bigcup', tint: 'violet',
+      id: 'bigops', title: 'Large Operators', icon: '\\textstyle\\sum\\prod\\bigcup', tint: 'violet', size: 'large',
       items: [
         ['sum', '\\sum'], ['prod', '\\prod'],
         ['sum-limits', '\\sum_{#1}^{#2} #0'],
@@ -163,14 +164,19 @@
         ['min', '\\min_{#1} #0'],
         ['sup', '\\sup_{#1} #0'],
         ['inf', '\\inf_{#1} #0'],
-        ['log-base', '\\log_{#1} #0'],
+      ],
+    },
+    {
+      id: 'functions', title: 'Functions', icon: '\\sin\\,\\log', tint: 'violet',
+      items: [
         ...symbols(['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'ln', 'log', 'exp', 'det']),
+        ['log-base', '\\log_{#1} #0'],
         ['arcsin', '\\arcsin'], ['arccos', '\\arccos'], ['arctan', '\\arctan'],
         ['sinh', '\\sinh'], ['cosh', '\\cosh'], ['tanh', '\\tanh'],
       ],
     },
     {
-      id: 'matrices', title: 'Matrices & Arrays', icon: '\\left(\\begin{smallmatrix}\\square&\\square\\\\\\square&\\square\\end{smallmatrix}\\right)', tint: 'amber',
+      id: 'matrices', size: 'large', title: 'Matrices & Arrays', icon: '\\left(\\begin{smallmatrix}\\square&\\square\\\\\\square&\\square\\end{smallmatrix}\\right)', tint: 'amber',
       items: [
         ['pmatrix', '\\begin{pmatrix} #0 & #1 \\\\ #2 & #3 \\end{pmatrix}'],
         ['bmatrix', '\\begin{bmatrix} #0 & #1 \\\\ #2 & #3 \\end{bmatrix}'],
