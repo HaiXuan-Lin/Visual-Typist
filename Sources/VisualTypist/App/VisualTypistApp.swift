@@ -136,12 +136,14 @@ struct EditorCommands: Commands {
 
         CommandGroup(replacing: .newItem) {
             Button("New") { session?.newDocument() }.keyboardShortcut("n")
-            Button("Open…") { session?.open() }.keyboardShortcut("o")
+            // ⌘O inserts ω in the editor (AxMath's Ctrl+O), so Open uses ⇧⌘O.
+            Button("Open…") { session?.open() }.keyboardShortcut("o", modifiers: [.command, .shift])
         }
 
         CommandGroup(replacing: .saveItem) {
             Button("Save") { session?.save() }.keyboardShortcut("s")
-            Button("Save As…") { session?.save(as: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
+            // ⇧⌘S inserts a sum, so Save As uses ⌥⇧⌘S.
+            Button("Save As…") { session?.save(as: true) }.keyboardShortcut("s", modifiers: [.command, .option, .shift])
             Menu("Export") {
                 ForEach(ExportFormat.allCases) { format in
                     Button("\(format.title)…") { session?.export(format) }
@@ -152,7 +154,7 @@ struct EditorCommands: Commands {
 
         CommandGroup(after: .pasteboard) {
             Divider()
-            Button("Copy LaTeX") { session?.copyLaTeX() }.keyboardShortcut("c", modifiers: [.command, .option])
+            Button("Copy LaTeX") { session?.copyLaTeX() }.keyboardShortcut("t")
             Button("Copy as Image") { session?.copyImage() }.keyboardShortcut("c", modifiers: [.command, .shift])
             Button("Copy MathML") { session?.copyMathML() }
         }
@@ -171,8 +173,8 @@ struct EditorCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
-            Button("Symbols") { session?.bridge.command("symbols") }.keyboardShortcut("1")
-            Button("LaTeX Code") { session?.bridge.command("code") }.keyboardShortcut("2")
+            Button("Symbols") { session?.bridge.command("symbols") }
+            Button("LaTeX Code") { session?.bridge.command("code") }
             Divider()
         }
 
@@ -190,8 +192,9 @@ enum HelpPanel {
         alert.informativeText = """
         Type math directly in the top pane. Click a symbol below to insert it; Tab moves between empty slots.
 
+        ↩  new line · ⇥  next slot · ⌫  in an empty slot selects its structure
         ⌃⇥  switch between Symbols and LaTeX code
-        ⌃G  type the next letter in Greek
+        ⌘G  type the next letter in Greek
         ⌥↑ ↓ ← →  add matrix rows and columns
         ⌘,  view and change keyboard shortcuts
 

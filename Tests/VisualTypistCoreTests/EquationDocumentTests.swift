@@ -67,6 +67,20 @@ struct EquationDocumentTests {
         #expect(EquationDocument(latex: "x").standaloneTeX().contains(#"\displaystyle"#))
     }
 
+    @Test func linesKeepMultiLineEnvironmentsTogether() {
+        let document = EquationDocument(latex: "a+b\n\\begin{aligned}x&=1\\\\\ny&=2\\end{aligned}\n\\frac{1}{\n2}\n")
+        #expect(document.lines == ["a+b", "\\begin{aligned}x&=1\\\\\ny&=2\\end{aligned}", "\\frac{1}{\n2}", ""])
+        #expect(EquationDocument(latex: "").lines == [""])
+        #expect(EquationDocument(latex: #"\{x\}"#).lines == [#"\{x\}"#])
+    }
+
+    @Test func multiLineDocumentsExportAsALeftAlignedArray() {
+        let tex = EquationDocument(latex: "x=1\ny=2").standaloneTeX()
+        #expect(tex.contains("\\begin{array}{l}\n\\displaystyle x=1 \\\\\n\\displaystyle y=2\n\\end{array}"))
+        #expect(!EquationDocument(latex: "x=1").standaloneTeX().contains("array"))
+        #expect(EquationDocument(latex: "a\\ \nb  ").standaloneTeX().contains("\\displaystyle a\\  \\\\\n\\displaystyle b\n"))
+    }
+
     @Test func standaloneTeXReimportsAsTheSameEquation() throws {
         let document = EquationDocument(latex: #"\frac{x^2+1}{\sqrt{y}}"#)
         #expect(try imported(document.standaloneTeX()) == document.latex)

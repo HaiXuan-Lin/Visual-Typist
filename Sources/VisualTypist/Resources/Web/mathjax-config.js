@@ -8,7 +8,8 @@ window.MathJax = {
     packages: ['base', 'ams', 'newcommand', 'configmacros', 'cancel', 'color', 'bbox', 'braket',
       'mathtools', 'mhchem', 'cases', 'upgreek', 'unicode', 'textmacros', 'textcomp', 'boldsymbol',
       'empheq', 'extpfeil', 'gensymb', 'colortbl'],
-    macros: { placeholder: ['{\\color[rgb]{0.6,0.64,0.68}{\\square}}', 1] },
+    // An empty slot: the light-blue block the editor shows.
+    macros: { placeholder: ['{\\color[rgb]{0.71,0.85,0.97}{\\rule[-0.05em]{0.42em}{0.68em}}}', 1] },
     maxBuffer: 100000,
     maxMacros: 10000,
     formatError: (_jax, error) => { throw new Error(error.message); },

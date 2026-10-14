@@ -1,5 +1,6 @@
 'use strict';
-// Default keyboard shortcuts.
+// Default keyboard shortcuts. Windows-style Ctrl shortcuts use ⌘ (cmd) and Alt shortcuts use ⌥ (alt);
+// while the equation has focus they take precedence over menu commands with the same keys.
 //
 // A binding maps a key combo (see KeyCombo.swift for the format) to one of:
 //   { insert: '<palette id>' }   insert a palette item
@@ -12,26 +13,26 @@
 window.VT_DEFAULT_KEYMAP = {
   // Symbols and structures
   'alt+g': { insert: 'gamma' },
-  'ctrl+p': { insert: 'pi' },
-  'ctrl+o': { insert: 'omega' },
+  'cmd+p': { insert: 'pi' },
+  'cmd+o': { insert: 'omega' },
   'alt+shift+p': { insert: 'psi' },
-  'ctrl+shift+p': { insert: 'partial' },
+  'cmd+shift+p': { insert: 'partial' },
   'alt+i': { insert: 'infty' },
-  "ctrl+'": { insert: 'prime' },
-  'ctrl+r': { insert: 'sqrt' },
-  'ctrl+f': { insert: 'frac' },
-  'ctrl+q': { insert: 'superscript' },
-  'ctrl+e': { insert: 'subscript' },
-  'ctrl+j': { insert: 'subsup' },
-  'ctrl+d': { insert: 'dot' },
-  'ctrl+shift+d': { insert: 'ddot' },
-  'ctrl+h': { insert: 'widehat' },
+  "cmd+'": { insert: 'prime' },
+  'cmd+r': { insert: 'sqrt' },
+  'cmd+f': { insert: 'frac' },
+  'cmd+q': { insert: 'superscript' },
+  'cmd+e': { insert: 'subscript' },
+  'cmd+j': { insert: 'subsup' },
+  'cmd+d': { insert: 'dot' },
+  'cmd+shift+d': { insert: 'ddot' },
+  'cmd+h': { insert: 'widehat' },
   'alt+t': { insert: 'overleftrightarrow' },
   'alt+b': { insert: 'bra' },
   'alt+k': { insert: 'ket' },
   'alt+9': { insert: 'paren-mid' },
-  'ctrl+shift+i': { insert: 'int-limits' },
-  'ctrl+shift+s': { insert: 'sum-limits' },
+  'cmd+shift+i': { insert: 'int-limits' },
+  'cmd+shift+s': { insert: 'sum-limits' },
 
   // Caret movement
   'alt+w': { command: 'cursorUp' },
@@ -41,27 +42,29 @@ window.VT_DEFAULT_KEYMAP = {
   'alt+q': { command: 'lineStart' },
   'alt+l': { command: 'lineEnd' },
 
-  // Editing
+  // Editing (Control-Tab: Command-Tab belongs to the system's app switcher)
   'ctrl+tab': { command: 'toggleMode' },
   'shift+enter': { command: 'applyCode' },
-  'ctrl+g': { command: 'greekNext' },
-  'ctrl+1': { command: 'styleRegular' },
-  'ctrl+2': { command: 'styleItalic' },
-  'ctrl+3': { command: 'styleBold' },
-  'ctrl+4': { command: 'styleBoldItalic' },
-  'ctrl+5': { command: 'styleSans' },
-  'ctrl+6': { command: 'styleMono' },
+  'cmd+g': { command: 'greekNext' },
+  'cmd+b': { command: 'styleBold' },
+  'cmd+i': { command: 'styleItalic' },
+  'cmd+1': { command: 'styleRegular' },
+  'cmd+2': { command: 'styleItalic' },
+  'cmd+3': { command: 'styleBold' },
+  'cmd+4': { command: 'styleBoldItalic' },
+  'cmd+5': { command: 'styleSans' },
+  'cmd+6': { command: 'styleMono' },
   'alt+up': { command: 'addRowBefore' },
   'alt+down': { command: 'addRowAfter' },
   'alt+left': { command: 'addColumnBefore' },
   'alt+right': { command: 'addColumnAfter' },
-  'ctrl+alt+up': { command: 'removeRow' },
-  'ctrl+alt+down': { command: 'removeRow' },
-  'ctrl+alt+left': { command: 'removeColumn' },
-  'ctrl+alt+right': { command: 'removeColumn' },
+  'cmd+alt+up': { command: 'removeRow' },
+  'cmd+alt+down': { command: 'removeRow' },
+  'cmd+alt+left': { command: 'removeColumn' },
+  'cmd+alt+right': { command: 'removeColumn' },
 };
 
-// ⌃G followed by a letter types a Greek letter; Shift gives the capital.
+// ⌘G followed by a letter types a Greek letter; Shift gives the capital.
 window.VT_GREEK_KEYS = {
   a: ['\\alpha', 'A'], b: ['\\beta', 'B'], c: ['\\chi', 'X'], d: ['\\delta', '\\Delta'],
   e: ['\\varepsilon', 'E'], f: ['\\phi', '\\Phi'], g: ['\\gamma', '\\Gamma'], h: ['\\eta', 'H'],

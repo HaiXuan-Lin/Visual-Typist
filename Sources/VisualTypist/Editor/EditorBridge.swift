@@ -170,8 +170,9 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 }
 
-/// Handles editor shortcuts natively so that Option and Control combinations reach the editor
-/// before macOS turns them into characters or dead keys (Option-E, Option-I, Option-U…).
+/// Handles editor shortcuts natively, so Option combinations reach the editor before macOS turns
+/// them into characters or dead keys (Option-E, Option-I…), and Command combinations bound in the
+/// editor win over menu items with the same keys while the equation has focus.
 final class EditorWebView: WKWebView {
     var interceptedCombos: Set<String> = []
 
@@ -244,12 +245,13 @@ final class EditorWebView: WKWebView {
         guard !isRecordingShortcut,
               let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard flags.contains(.control) || flags.contains(.option), !flags.contains(.command),
+        guard !flags.intersection([.control, .option, .command]).isEmpty,
               let key = KeyCombo.keyName(forKeyCode: event.keyCode) else { return false }
         var modifiers: KeyCombo.Modifiers = []
         if flags.contains(.control) { modifiers.insert(.control) }
         if flags.contains(.option) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.command) { modifiers.insert(.command) }
         let combo = KeyCombo(modifiers: modifiers, key: key).description
         guard interceptedCombos.contains(combo) else { return false }
         onShortcut?(combo)

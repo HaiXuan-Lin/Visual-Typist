@@ -10,7 +10,7 @@
 
   window.VT_PALETTE = [
     {
-      id: 'greek', title: 'Greek Letters', tab: 'αβΔΩ', tint: 'blue', columns: 10,
+      id: 'greek', title: 'Greek Letters', icon: '\\alpha\\beta\\Delta\\Omega', tint: 'blue',
       items: symbols([
         'alpha', 'beta', 'chi', 'delta', 'epsilon', 'varepsilon', 'phi', 'varphi', 'gamma', 'eta',
         'iota', 'kappa', 'lambda', 'mu', 'nu', 'pi', 'varpi', 'theta', 'vartheta', 'rho',
@@ -19,7 +19,7 @@
       ]),
     },
     {
-      id: 'structures', title: 'Fractions, Roots & Scripts', tab: '√▢ ▢⁄▢', tint: 'rose', columns: 8,
+      id: 'structures', title: 'Fractions, Roots & Scripts', icon: '\\sqrt{\\square}\\,\\tfrac{\\square}{\\square}', tint: 'rose',
       items: [
         ['sqrt', '\\sqrt{#0}'],
         ['root', '\\sqrt[#1]{#0}'],
@@ -40,7 +40,7 @@
       ],
     },
     {
-      id: 'operators', title: 'Operators', tab: '±×÷', tint: 'green', columns: 10,
+      id: 'operators', title: 'Operators', icon: '\\pm\\times\\div', tint: 'green',
       items: [
         ['plus', '+'], ['minus', '-'], ...symbols(['pm', 'mp', 'times', 'div', 'cdot', 'circ', 'ast', 'star',
           'oplus', 'ominus', 'otimes', 'odot', 'bullet', 'dagger', 'wedge', 'vee', 'cap', 'cup',
@@ -50,7 +50,7 @@
       ],
     },
     {
-      id: 'relations', title: 'Relations', tab: '=≤≈', tint: 'green', columns: 10,
+      id: 'relations', title: 'Relations', icon: '=\\le\\approx', tint: 'green',
       items: [
         ['equals', '='], ['less', '<'], ['greater', '>'],
         ...symbols(['ne', 'le', 'ge', 'leqslant', 'geqslant', 'll', 'gg', 'equiv', 'approx', 'sim',
@@ -63,7 +63,7 @@
       ],
     },
     {
-      id: 'symbols', title: 'Symbols & Fonts', tab: '∂∞ℝ', tint: 'amber', columns: 10,
+      id: 'symbols', title: 'Symbols & Fonts', icon: '\\partial\\infty\\mathbb{R}', tint: 'amber',
       items: [
         ...symbols(['partial', 'infty', 'nabla', 'hbar', 'ell', 'Re', 'Im', 'wp', 'aleph', 'emptyset']),
         ['varnothing', '\\varnothing'],
@@ -85,7 +85,7 @@
       ],
     },
     {
-      id: 'accents', title: 'Accents', tab: 'âäã', tint: 'rose', columns: 9,
+      id: 'accents', title: 'Accents', icon: '\\hat{a}\\,\\ddot{a}\\,\\tilde{a}', tint: 'rose',
       items: [
         ...['hat', 'check', 'tilde', 'bar', 'vec', 'dot', 'ddot', 'dddot', 'acute', 'grave', 'breve',
           'mathring', 'widehat', 'widetilde', 'overline', 'underline', 'overrightarrow', 'overleftarrow',
@@ -94,7 +94,7 @@
       ],
     },
     {
-      id: 'braces', title: 'Over & Under', tab: '⏞⏟', tint: 'rose', columns: 8,
+      id: 'braces', title: 'Over & Under', icon: '\\overbrace{\\square\\,\\square}', tint: 'rose',
       items: [
         ['overbrace', '\\overbrace{#0}^{#1}'],
         ['underbrace', '\\underbrace{#0}_{#1}'],
@@ -107,7 +107,7 @@
       ],
     },
     {
-      id: 'brackets', title: 'Brackets', tab: '( ) [ ] { }', tint: 'violet', columns: 8,
+      id: 'brackets', title: 'Brackets', icon: '(\\,)\\,[\\,]\\,\\{\\,\\}', tint: 'violet',
       items: [
         ['parens', '\\left( #0 \\right)'],
         ['brackets', '\\left[ #0 \\right]'],
@@ -130,7 +130,7 @@
       ],
     },
     {
-      id: 'integrals', title: 'Integrals', tab: '∫∮∬', tint: 'violet', columns: 8,
+      id: 'integrals', title: 'Integrals', icon: '\\int\\!\\oint\\!\\iint', tint: 'violet',
       items: [
         ['int', '\\int'], ['iint', '\\iint'], ['iiint', '\\iiint'], ['oint', '\\oint'],
         ['int-limits', '\\int_{#1}^{#2} #0'],
@@ -146,7 +146,7 @@
       ],
     },
     {
-      id: 'bigops', title: 'Large Operators & Functions', tab: 'ΣΠ∪', tint: 'violet', columns: 8,
+      id: 'bigops', title: 'Large Operators & Functions', icon: '\\textstyle\\sum\\prod\\bigcup', tint: 'violet',
       items: [
         ['sum', '\\sum'], ['prod', '\\prod'],
         ['sum-limits', '\\sum_{#1}^{#2} #0'],
@@ -169,7 +169,7 @@
       ],
     },
     {
-      id: 'matrices', title: 'Matrices & Arrays', tab: '(▦) {▤', tint: 'amber', columns: 8,
+      id: 'matrices', title: 'Matrices & Arrays', icon: '\\left(\\begin{smallmatrix}\\square&\\square\\\\\\square&\\square\\end{smallmatrix}\\right)', tint: 'amber',
       items: [
         ['pmatrix', '\\begin{pmatrix} #0 & #1 \\\\ #2 & #3 \\end{pmatrix}'],
         ['bmatrix', '\\begin{bmatrix} #0 & #1 \\\\ #2 & #3 \\end{bmatrix}'],
@@ -190,7 +190,7 @@
       ],
     },
     {
-      id: 'arrows', title: 'Arrows', tab: '→ ⇒', tint: 'green', columns: 10,
+      id: 'arrows', title: 'Arrows', icon: '\\to\\,\\Rightarrow', tint: 'green',
       items: [
         ...symbols(['to', 'gets', 'leftrightarrow', 'Rightarrow', 'Leftarrow', 'Leftrightarrow', 'mapsto',
           'uparrow', 'downarrow', 'updownarrow', 'Uparrow', 'Downarrow', 'longrightarrow', 'longleftarrow',

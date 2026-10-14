@@ -6,9 +6,11 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
 
 - **Visual editing** on top, **symbol palette** below — or flip the bottom pane to the
   **LaTeX code** (`⌃⇥`). Both stay in sync as you type.
-- **Structured editing like a classic equation editor:** every empty slot keeps its placeholder
-  box, ↑/↓ move between slots (numerator ↔ denominator, upper ↔ lower limit, matrix rows), and
-  ⌫ in an empty slot steps back or removes the structure once all its slots are empty.
+- **Structured editing like a classic equation editor:** a document of equation lines (↩ starts
+  a new line, ⌫ at the start of a line joins it to the one above); empty slots show as light-blue
+  blocks; ⇥ / ⇧⇥ walk the slots; ↑/↓ move between slots (numerator ↔ denominator, upper ↔ lower
+  limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a second ⌫
+  deletes it.
 - **300+ symbols and templates** in 12 tabs: Greek, fractions & scripts, operators, relations,
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, matrices and arrows.
@@ -33,33 +35,39 @@ The app is signed ad hoc for local use; it is not notarized.
 
 ## Keyboard shortcuts
 
-Shortcuts use **⌃ Control** and **⌥ Option**, so they never collide with the ⌘ menu commands.
+Shortcuts follow Windows equation-editor habits: **Ctrl becomes ⌘** and **Alt becomes ⌥**.
 Keys are matched by position, so `⌥K` works even though macOS would normally type `˚`.
+
+While the equation has focus, its shortcuts win over menu items with the same keys — `⌘Q` makes
+a superscript and `⌘H` a wide hat, so quit or hide from the app menu (or reassign them). Menu
+commands that would collide moved: Open is `⇧⌘O`, Save As `⌥⇧⌘S`, Copy LaTeX `⌘T`.
 
 | Insert | Shortcut | | Insert | Shortcut |
 | --- | --- | --- | --- | --- |
-| γ | `⌥G` | | Fraction | `⌃F` |
-| ∞ | `⌥I` | | Square root | `⌃R` |
-| π | `⌃P` | | Superscript | `⌃Q` |
-| ω | `⌃O` | | Subscript | `⌃E` |
-| ψ | `⌥⇧P` | | Sub- and superscript | `⌃J` |
-| ∂ | `⌃⇧P` | | Integral with limits | `⌃⇧I` |
-| (▢\|▢) | `⌥9` | | Sum with limits | `⌃⇧S` |
-| ′ (prime) | `⌃'` | | Dot / double dot accent | `⌃D` / `⌃⇧D` |
-| ⟨▢\| (bra) | `⌥B` | | Wide hat | `⌃H` |
+| γ | `⌥G` | | Fraction | `⌘F` |
+| ∞ | `⌥I` | | Square root | `⌘R` |
+| π | `⌘P` | | Superscript | `⌘Q` |
+| ω | `⌘O` | | Subscript | `⌘E` |
+| ψ | `⌥⇧P` | | Sub- and superscript | `⌘J` |
+| ∂ | `⇧⌘P` | | Integral with limits | `⇧⌘I` |
+| (▢\|▢) | `⌥9` | | Sum with limits | `⇧⌘S` |
+| ′ (prime) | `⌘'` | | Dot / double dot accent | `⌘D` / `⇧⌘D` |
+| ⟨▢\| (bra) | `⌥B` | | Wide hat | `⌘H` |
 | \|▢⟩ (ket) | `⌥K` | | ↔ over | `⌥T` |
 
 | Editing | Shortcut |
 | --- | --- |
+| New line / join with the line above | `↩` / `⌫` at the start of a line |
+| Next / previous slot | `⇥` / `⇧⇥` |
 | Move up / down / left / right | `⌥W` `⌥S` `⌥A` `⌥D` (or the arrow keys) |
 | Move to start / end of line | `⌥Q` / `⌥L` |
 | Switch between symbols and LaTeX code | `⌃⇥` |
 | Apply the LaTeX code and return to the equation | `⇧↩` |
-| Type the next letter in Greek (⇧ for capitals) | `⌃G`, then a letter |
-| Upright / italic / bold / bold italic / sans / mono | `⌃1` … `⌃6` |
+| Type the next letter in Greek (⇧ for capitals) | `⌘G`, then a letter |
+| Upright / italic / bold / bold italic / sans / mono | `⌘1` … `⌘6` (bold `⌘B`, italic `⌘I`) |
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
-| Matrix: delete row / column | `⌃⌥↑` / `⌃⌥←` |
-| Copy LaTeX / copy as image | `⌥⌘C` / `⇧⌘C` |
+| Matrix: delete row / column | `⌥⌘↑` / `⌥⌘←` |
+| Copy LaTeX / copy as image | `⌘T` / `⇧⌘C` |
 
 While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
 keyboard layout so letters arrive as math; your input method returns in the LaTeX pane, where
@@ -98,7 +106,8 @@ Tests/VisualTypistCoreTests/   unit tests
 scripts/                       test runner, vendor update, icon generator
 ```
 
-Documents are saved as `.vteq` (JSON with the LaTeX source and display settings). The app also
+Documents are saved as `.vteq` (JSON with the LaTeX source, one line per equation line, and
+display settings); multi-line documents export as a left-aligned array. The app also
 opens `.tex`, `.latex` and `.txt` files containing a single equation.
 
 ## Development

@@ -16,7 +16,12 @@
   --tint-green: #e3eedd;
   --tint-violet: #e6e3f2;
   --tint-amber: #f3ead8;
-  --bottom-height: 236px;
+  --vt-slot: #c6e4fb;
+  --vt-slot-active: #9ccff5;
+  --line-rule: #d6d8ea;
+  --tile-w: 44px;
+  --tile-h: 38px;
+  --bottom-height: 214px;
   font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 
@@ -38,6 +43,9 @@
     --tint-green: #2f3a2c;
     --tint-violet: #34314a;
     --tint-amber: #3e3627;
+    --vt-slot: #2a4865;
+    --vt-slot-active: #3b6d99;
+    --line-rule: #3c3e4e;
   }
 }
 
@@ -47,26 +55,26 @@ body { background: var(--page); color: var(--text); -webkit-user-select: none; u
 button, select, input, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 
-#app { display: grid; grid-template-rows: minmax(80px, 1fr) 5px auto var(--bottom-height); height: 100vh; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(80px, 1fr) 5px auto var(--bottom-height); height: 100vh; }
 
 /* Equation canvas */
 #canvas { position: relative; overflow: auto; background: var(--page); cursor: text; }
-#field-host { min-height: 100%; padding: 18px 22px; }
+#field-host { display: flex; flex-direction: column; min-height: 100%; padding: 10px 22px 40px; }
+/* One field per line, each on its own dotted rule. */
 math-field {
-  display: block; width: 100%; min-height: 1.6em; padding: 4px 2px 10px;
-  border: 0; border-bottom: 1px dotted #c8cbe4; outline: none; background: transparent;
+  display: block; width: 100%; min-height: 1.6em; padding: 6px 2px 8px;
+  border: 0; border-bottom: 1px dotted var(--line-rule); outline: none; background: transparent;
   color: var(--text); font-size: 40px;
   --caret-color: var(--text);
   --selection-background-color: #b4d5fe;
   --selection-color: inherit;
-  --contains-highlight-background-color: #0a6cdf14;
-  --placeholder-color: #9aa3ad;
+  --contains-highlight-background-color: transparent;
   --smart-fence-color: #8f8f99;
 }
 math-field::part(menu-toggle), math-field::part(virtual-keyboard-toggle) { display: none; }
 math-field::part(container) { padding: 0; }
 @media (prefers-color-scheme: dark) {
-  math-field { border-bottom-color: #4a4c60; --selection-background-color: #2d5a8c; }
+  math-field { --selection-background-color: #2d5a8c; }
 }
 #greek-indicator {
   position: absolute; top: 10px; right: 14px; padding: 2px 8px; border-radius: 10px;
@@ -103,8 +111,53 @@ math-field::part(container) { padding: 0; }
 .segmented button[aria-selected="true"] { background: var(--page) !important; box-shadow: 0 1px 2px #0000002a; }
 
 /* Bottom pane */
-#bottom { min-height: 0; background: var(--pane); }
-#symbols-pane, #code-pane { display: flex; flex-direction: column; height: 100%; }
+#bottom { min-height: 0; min-width: 0; background: var(--pane); }
+#symbols-pane, #code-pane { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+
+#tabs {
+  display: flex; gap: 2px; padding: 5px 10px 0; overflow-x: auto; scrollbar-width: none; flex-shrink: 0;
+  border-bottom: 1px solid var(--chrome-border);
+}
+#tabs::-webkit-scrollbar { display: none; }
+#tabs button {
+  flex-shrink: 0; height: 28px; min-width: 62px; padding: 0 12px; border: 1px solid transparent; border-bottom: 0;
+  border-radius: 7px 7px 0 0; background: transparent; color: var(--secondary);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+#tabs button { font-size: 14px; }
+#tabs button svg { max-height: 21px; max-width: 70px; overflow: visible; }
+#tabs button:hover { color: var(--text); background: var(--button-hover); }
+#tabs button[aria-selected="true"] { color: var(--text); background: var(--page); border-color: var(--chrome-border); margin-bottom: -1px; }
+
+/* Every category side by side, four rows each, in one sideways-scrolling strip. */
+#strip {
+  flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px 10px;
+  overflow-x: auto; overflow-y: hidden; background: var(--page); scroll-padding: 0 10px;
+}
+.group {
+  flex: none; display: grid; grid-template-columns: repeat(var(--columns), var(--tile-w));
+  grid-template-rows: repeat(4, var(--tile-h)); gap: 1px; padding: 1px; border-radius: 7px; background: var(--tile-border);
+}
+.group[data-tint="blue"] { --tint: var(--tint-blue); }
+.group[data-tint="rose"] { --tint: var(--tint-rose); }
+.group[data-tint="green"] { --tint: var(--tint-green); }
+.group[data-tint="violet"] { --tint: var(--tint-violet); }
+.group[data-tint="amber"] { --tint: var(--tint-amber); }
+.tile {
+  position: relative; border: 0; padding: 0; background: var(--tint); color: var(--text); font-size: 15px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.group .tile:first-child { border-top-left-radius: 6px; }
+.tile:hover { filter: brightness(.95); }
+.tile:active { filter: brightness(.88); }
+@media (prefers-color-scheme: dark) { .tile:hover { filter: brightness(1.2); } .tile:active { filter: brightness(1.35); } }
+.tile svg { max-width: calc(var(--tile-w) - 8px); max-height: calc(var(--tile-h) - 6px); width: auto; height: auto; }
+.tile .key {
+  position: absolute; right: 2px; bottom: 0; font: 600 8px/1.2 -apple-system, sans-serif; color: var(--secondary);
+  letter-spacing: -.02em; pointer-events: none;
+}
+
+#code-pane { display: flex; flex-direction: column; height: 100%; }
 
 #tabs { display: flex; gap: 2px; padding: 5px 8px 0; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; border-bottom: 1px solid var(--chrome-border); }
 #tabs::-webkit-scrollbar { display: none; }

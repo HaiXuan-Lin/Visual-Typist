@@ -3,19 +3,22 @@
 (() => {
   const $ = id => document.getElementById(id);
   const canvas = $('canvas');
+  const fieldHost = $('field-host');
   const codeArea = $('code');
   const codeStatus = $('code-status');
-  const grid = $('grid');
+  const strip = $('strip');
   const tabs = $('tabs');
 
   const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96];
   const EDIT_SCALE = 1.25; // The canvas shows equations a little larger than their export size.
+  const DEFAULT_INK = '#17191D'; // Shown in the canvas as the theme's text color, so it reads in dark mode.
 
-  const state = { latex: '', fontSize: 32, color: '#17191D', displayStyle: true };
-  const ui = { mode: 'symbols', category: VT_PALETTE[0].id };
+  const state = { latex: '', fontSize: 32, color: DEFAULT_INK, displayStyle: true };
+  const ui = { mode: 'symbols' };
   const paletteById = new Map(VT_PALETTE.flatMap(category => category.items.map(item => [item.id, item])));
 
-  let mathfield = null;
+  let lines = [];        // One editor field per line of the document.
+  let mathfield = null;  // The line with the caret.
   let scratchField = null;
   let overrides = {};
   let keymap = {};
@@ -42,14 +45,20 @@
   const CODE_KEYS = {
     Quote: "'", Comma: ',', Minus: '-', Period: '.', Slash: '/', Semicolon: ';', Equal: '=',
     BracketLeft: '[', BracketRight: ']', Backslash: '\\', Backquote: '`', Tab: 'tab', Enter: 'enter',
-    NumpadEnter: 'enter', Space: 'space', Backspace: 'backspace', Escape: 'escape',
-    ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+    NumpadEnter: 'enter', Space: 'space', Backspace: 'backspace', Delete: 'forwarddelete', Escape: 'escape',
+    ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Home: 'home', End: 'end',
   };
   const KEY_ALIASES = { return: 'enter', esc: 'escape', delete: 'backspace', quote: "'", apostrophe: "'" };
   const KEY_NAMES = new Set([...'abcdefghijklmnopqrstuvwxyz0123456789', ...Object.values(CODE_KEYS)]);
   const MODIFIERS = [['ctrl', '⌃'], ['alt', '⌥'], ['shift', '⇧'], ['cmd', '⌘']];
   const MODIFIER_ALIASES = { control: 'ctrl', option: 'alt', opt: 'alt', command: 'cmd' };
-  const KEY_SYMBOLS = { left: '←', right: '→', up: '↑', down: '↓', tab: '⇥', enter: '↩', space: 'Space', backspace: '⌫', escape: '⎋' };
+  const KEY_SYMBOLS = {
+    left: '←', right: '→', up: '↑', down: '↓', tab: '⇥', enter: '↩', space: 'Space', backspace: '⌫',
+    forwarddelete: '⌦', escape: '⎋', home: '↖', end: '↘',
+  };
+  // Menu and system commands that a recorded shortcut may not take over.
+  const RESERVED = new Set(['cmd+c', 'cmd+v', 'cmd+x', 'cmd+z', 'cmd+shift+z', 'cmd+a', 'cmd+s', 'cmd+n',
+    'cmd+w', 'cmd+m', 'cmd+,', 'cmd+tab', 'cmd+space', 'cmd+shift+c', 'cmd+alt+c', 'cmd+t']);
 
   function keyName(event) {
     if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
@@ -87,6 +96,9 @@
 
   // ---------------------------------------------------------------- keymap
 
+  const DEFAULT_KEYMAP = Object.fromEntries(
+    Object.entries(VT_DEFAULT_KEYMAP).map(([combo, binding]) => [normalizeCombo(combo), binding]));
+
   function validBinding(binding) {
     if (!binding || typeof binding !== 'object') return false;
     if (typeof binding.insert === 'string') return paletteById.has(binding.insert);
@@ -106,7 +118,7 @@
 
   function rebuildKeymap() {
     keymap = {};
-    for (const [combo, binding] of Object.entries(VT_DEFAULT_KEYMAP)) keymap[normalizeCombo(combo)] = binding;
+    Object.assign(keymap, DEFAULT_KEYMAP);
     for (const [combo, binding] of Object.entries(overrides)) {
       if (binding === null) delete keymap[combo];
       else if (validBinding(binding)) keymap[combo] = binding;
@@ -139,8 +151,7 @@
   }
 
   function unassign(combo) {
-    const defaultBinding = VT_DEFAULT_KEYMAP[combo];
-    if (defaultBinding) overrides[combo] = null;
+    if (DEFAULT_KEYMAP[combo]) overrides[combo] = null;
     else delete overrides[combo];
   }
 
@@ -244,7 +255,7 @@
     $('greek-indicator').hidden = !active;
   }
 
-  // ---------------------------------------------------------------- synchronization
+  // ---------------------------------------------------------------- lines and fields
 
   function cleanLatex(latex) {
     const source = latex.trim();
@@ -255,7 +266,49 @@
     return source;
   }
 
-  async function createField(parent, { scratch = false } = {}) {
+  /**
+   * Splits a document into its lines. A newline inside braces or an environment (an `aligned`
+   * block written over several lines, say) belongs to that line rather than starting a new one.
+   */
+  function splitLines(latex) {
+    const result = [];
+    let current = null;
+    let depth = 0;
+    for (const raw of latex.split('\n')) {
+      current = current === null ? raw : `${current}\n${raw}`;
+      const code = raw.replace(/\\\\/g, '').replace(/\\[{}]/g, '').replace(/%.*$/, '');
+      depth += (code.match(/\{/g) || []).length - (code.match(/\}/g) || []).length;
+      depth += (code.match(/\\begin\{/g) || []).length - (code.match(/\\end\{/g) || []).length;
+      if (depth <= 0) {
+        result.push(current);
+        current = null;
+        depth = 0;
+      }
+    }
+    if (current !== null) result.push(current);
+    return result.length ? result : [''];
+  }
+
+  // Empty slots are drawn like a classic equation editor's: a borderless light-blue block.
+  // The slot holding the caret is a deeper blue, without MathLive's selection rectangle around it.
+  const FIELD_CSS = `
+    .vt-slot { color: transparent !important; background: linear-gradient(var(--vt-slot), var(--vt-slot)) center / 58% 74% no-repeat !important; }
+    .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
+    .ML__container:has(.vt-slot-active) .ML__selection { display: none !important; }
+  `;
+
+  /** Marks MathLive's placeholder glyphs (▢) so the stylesheet above can repaint them. */
+  function tagSlots(field) {
+    // "Active" only when the selection is exactly one slot, not a larger selection containing slots.
+    const slotSelected = !!fieldModel(field)?.selectionIsPlaceholder;
+    for (const element of field.shadowRoot.querySelectorAll('.ML__content span')) {
+      const isSlot = element.childElementCount === 0 && element.textContent === '▢';
+      element.classList.toggle('vt-slot', isSlot);
+      element.classList.toggle('vt-slot-active', isSlot && slotSelected && element.classList.contains('ML__selected'));
+    }
+  }
+
+  async function createField({ scratch = false, before = null } = {}) {
     const field = new MathfieldElement();
     field.setAttribute('math-virtual-keyboard-policy', 'manual');
     field.setAttribute('smart-fence', 'on');
@@ -264,39 +317,75 @@
       field.tabIndex = -1;
       field.style.cssText = 'position:fixed;left:-10000px;top:0;width:400px;';
     } else {
-      field.setAttribute('aria-label', 'Equation editor');
+      field.setAttribute('aria-label', 'Equation line');
       field.addEventListener('input', syncFromField);
+      field.addEventListener('focusin', () => { mathfield = field; });
     }
     const mounted = new Promise(resolve => field.addEventListener('mount', resolve, { once: true }));
-    parent.append(field);
+    (scratch ? document.body : fieldHost).insertBefore(field, scratch ? null : before);
     await mounted;
     field.menuItems = [];
-    field.mathModeSpace = '\\,';
+    field.mathModeSpace = '\\ ';
     field.letterShapeStyle = 'tex';
+    if (!scratch) {
+      const style = document.createElement('style');
+      style.textContent = FIELD_CSS;
+      field.shadowRoot.append(style);
+      new MutationObserver(() => tagSlots(field))
+        .observe(field.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+      styleField(field);
+    }
     return field;
   }
 
+  async function insertLine(index) {
+    const field = await createField({ before: lines[index] ?? null });
+    lines.splice(index, 0, field);
+    return field;
+  }
+
+  /** Removes a line. If it has focus, `next` takes it first: MathLive fails to blur a detached field. */
+  function removeLine(field, next) {
+    if (field.hasFocus() && next) next.focus();
+    lines.splice(lines.indexOf(field), 1);
+    if (mathfield === field) mathfield = next ?? lines[0] ?? null;
+    field.remove();
+  }
+
   /**
-   * Replaces the editor contents. MathLive 0.109 can keep invisible empty-group atoms across
-   * setValue() after some insertions; when the result differs from a clean field's, the editor
+   * Replaces one line's contents. MathLive 0.109 can keep invisible empty-group atoms across
+   * setValue() after some insertions; when the result differs from a clean field's, the line's
    * element is rebuilt.
    */
-  async function setFieldValue(latex) {
-    const value = cleanLatex(latex);
+  async function setLineValue(index, latex) {
+    const field = lines[index];
     const options = { silenceNotifications: true, format: 'latex', mode: 'math' };
-    mathfield.mode = 'math'; // Leave text mode, e.g. after inserting \text{}.
-    mathfield.setValue(value, options);
-    scratchField.setValue(value, options);
-    if (mathfield.getValue('latex') === scratchField.getValue('latex')) return;
-    const hadFocus = mathfield.hasFocus();
-    const stale = mathfield;
-    stale.style.display = 'none';
-    mathfield = await createField($('field-host'));
-    mathfield.setValue(value, options);
-    applyPresentation();
-    // Focus moves before the old element is removed: MathLive blurs it and fails if it is detached.
-    if (hadFocus) mathfield.focus();
-    stale.remove();
+    field.mode = 'math'; // Leave text mode, e.g. after inserting \text{}.
+    field.setValue(latex, options);
+    scratchField.setValue(latex, options);
+    if (field.getValue('latex') === scratchField.getValue('latex')) return field;
+    const hadFocus = field.hasFocus();
+    field.style.display = 'none';
+    const fresh = await createField({ before: field });
+    fresh.setValue(latex, options);
+    lines[index] = fresh;
+    if (mathfield === field) mathfield = fresh;
+    if (hadFocus) fresh.focus(); // Focus moves before the old element is removed.
+    field.remove();
+    return fresh;
+  }
+
+  /** Shows `latex` (lines separated by newlines) in the editor. */
+  async function setDocumentLatex(latex) {
+    const parts = splitLines(cleanLatex(latex));
+    while (lines.length < parts.length) await insertLine(lines.length);
+    while (lines.length > parts.length) removeLine(lines.at(-1), lines.at(-2));
+    for (let index = 0; index < parts.length; index += 1) await setLineValue(index, parts[index]);
+    if (!lines.includes(mathfield)) mathfield = lines[0];
+  }
+
+  function documentLatex() {
+    return lines.map(field => portableLatex(field.getValue('latex'))).join('\n');
   }
 
   /** Rewrites MathLive output that standard LaTeX (and MathJax) rejects, e.g. `\middle{|}` or `\bm`. */
@@ -305,22 +394,23 @@
       .replace(/\\bm(?![a-zA-Z])/g, '\\boldsymbol')
       .replace(/\\doubleprime(?![a-zA-Z])/g, '\\prime\\prime')
       .replace(/\\middle\{(\\[a-zA-Z]+|\\?[^{}\s])\}/g,
-      (_, delimiter) => `\\middle${delimiter}${/^\\[a-zA-Z]+$/.test(delimiter) ? ' ' : ''}`);
+        (_, delimiter) => `\\middle${delimiter}${/^\\[a-zA-Z]+$/.test(delimiter) ? ' ' : ''}`);
   }
 
   // ---------------------------------------------------------------- structural editing
   //
-  // Classic equation-editor behavior on top of MathLive: every empty slot shows a placeholder box,
-  // Backspace in an empty slot steps out of (or removes) its structure, and the up/down arrows
-  // move the caret to the nearest slot above or below. These use MathLive's internal model
-  // (the bundled version is pinned); each helper degrades to MathLive's default if it is missing.
+  // Classic equation-editor behavior on top of MathLive: empty slots keep their placeholder,
+  // Backspace in an empty slot selects its structure (a second Backspace deletes it), Tab walks the
+  // slots, the arrow keys move between slots and lines, and Return starts a new line. These use
+  // MathLive's internal model (the bundled version is pinned); each degrades to MathLive's default.
 
   const SCRIPT_BRANCHES = ['superscript', 'subscript'];
+  const LARGE_OPERATORS = new Set(['extensible-symbol', 'mop', 'operator']);
   let restoringPlaceholders = false;
   let PlaceholderAtom = null;
 
-  function fieldModel() {
-    const model = mathfield?._mathfield?.model;
+  function fieldModel(field = mathfield) {
+    const model = field?._mathfield?.model;
     return model && typeof model.offsetOf === 'function' && model.root ? model : null;
   }
 
@@ -337,10 +427,10 @@
   const isSlotEmpty = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first' || child.type === 'placeholder');
   const hasNoAtoms = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first');
 
-  /** The slots that belong together with `branch`: scripts pair with scripts, other branches with each other. */
-  function siblingSlots(atom, branch) {
-    const script = SCRIPT_BRANCHES.includes(branch);
-    return (atom.branches ?? []).filter(other => SCRIPT_BRANCHES.includes(other) === script);
+  /** The atom at the caret, or the selected placeholder. */
+  function caretAtom(model) {
+    const [start, end] = model.selection.ranges[0];
+    return model.selectionIsPlaceholder ? model.at(Math.max(start, end)) : model.at(model.position);
   }
 
   /** Puts a placeholder into every empty slot. Returns true if anything changed. */
@@ -348,8 +438,8 @@
     const model = fieldModel();
     const Placeholder = placeholderClass();
     if (!model || !Placeholder || restoringPlaceholders || !model.selectionIsCollapsed) return false;
-    const caretAtom = model.at(model.position);
-    let caretPlaceholder = null;
+    const anchor = model.at(model.position);
+    let anchorPlaceholder = null;
     let changed = false;
     for (const atom of model.atoms) {
       // Empty groups ({} before prescripts) and text are intentionally empty.
@@ -359,8 +449,8 @@
         const placeholder = new Placeholder();
         atom.addChild(placeholder, branch);
         changed = true;
-        if (caretAtom?.type === 'first' && caretAtom.parent === atom && sameBranch(caretAtom.parentBranch, branch)) {
-          caretPlaceholder = placeholder;
+        if (anchor?.type === 'first' && anchor.parent === atom && sameBranch(anchor.parentBranch, branch)) {
+          anchorPlaceholder = placeholder;
         }
       }
     }
@@ -368,8 +458,8 @@
     restoringPlaceholders = true;
     try {
       model.contentDidChange({ inputType: 'insertText' });
-      if (caretPlaceholder) selectPlaceholderAt(model.offsetOf(caretPlaceholder));
-      else mathfield.position = model.offsetOf(caretAtom);
+      if (anchorPlaceholder) selectPlaceholderAt(model.offsetOf(anchorPlaceholder));
+      else mathfield.position = model.offsetOf(anchor);
     } finally {
       restoringPlaceholders = false;
     }
@@ -389,51 +479,64 @@
     else mathfield.position = offset;
   }
 
-  /** The slot (owner atom and branch) whose only content is the caret or a selected placeholder. */
-  function emptySlotAtCaret(model) {
-    const [start, end] = model.selection.ranges[0];
-    const atom = model.selectionIsPlaceholder ? model.at(Math.max(start, end))
-      : start === end ? model.at(model.position) : null;
-    if (!atom || !['first', 'placeholder'].includes(atom.type)) return null;
-    const owner = atom.parent;
-    if (!owner || owner.isRoot || !isSlotEmpty(owner, atom.parentBranch)) return null;
-    return { owner, branch: atom.parentBranch };
+  function selectAtom(model, atom) {
+    const start = model.offsetOf(atom) - (atom.children?.length ?? 0) - 1;
+    // An operator's empty operand (the integrand of ∫□) goes with it.
+    const operand = LARGE_OPERATORS.has(atom.type) && atom.rightSibling?.type === 'placeholder' ? atom.rightSibling : atom;
+    mathfield.selection = { ranges: [[start, model.offsetOf(operand)]] };
   }
 
   /**
-   * Backspace in an empty slot of a multi-slot structure (fraction, limits, matrix…): moves to the
-   * previous slot, or removes the structure once all of its slots are empty. Single-slot structures
-   * use MathLive's own behavior, which already removes them.
+   * Backspace in an empty slot selects the structure that owns it, so a second Backspace deletes it.
+   * An empty script on an ordinary symbol (x^□) is removed at once, leaving the symbol.
    */
   function backspaceInEmptySlot() {
     const model = fieldModel();
     if (!model) return false;
-    const slot = emptySlotAtCaret(model);
-    if (!slot) return false;
-    const { owner, branch } = slot;
-    const slots = siblingSlots(owner, branch);
-    if (slots.length <= 1) return false;
-    if (slots.some(other => !isSlotEmpty(owner, other))) {
-      mathfield.position = model.offsetOf(branchAtoms(owner, branch)[0]);
-      mathfield.executeCommand('moveToPreviousChar');
-      return true;
-    }
-    restoringPlaceholders = true;
-    try {
-      if (SCRIPT_BRANCHES.includes(branch)) {
-        for (const script of slots) owner.removeBranch(script);
+    const atom = caretAtom(model);
+    if (!atom || !['first', 'placeholder'].includes(atom.type)) return false;
+    if (!model.selectionIsPlaceholder && !model.selectionIsCollapsed) return false;
+    const owner = atom.parent;
+    const branch = atom.parentBranch;
+    if (!owner || owner.isRoot || !isSlotEmpty(owner, branch)) return false;
+    if (SCRIPT_BRANCHES.includes(branch) && !LARGE_OPERATORS.has(owner.type)) {
+      const scripts = (owner.branches ?? []).filter(other => SCRIPT_BRANCHES.includes(other));
+      if (scripts.some(other => !isSlotEmpty(owner, other))) {
+        selectAtom(model, owner);
+        return true;
+      }
+      restoringPlaceholders = true;
+      try {
+        for (const script of scripts) owner.removeBranch(script);
         model.contentDidChange({ inputType: 'deleteContentBackward' });
         mathfield.position = model.offsetOf(owner);
-      } else {
-        const previous = owner.leftSibling;
-        owner.parent.removeChild(owner);
-        model.contentDidChange({ inputType: 'deleteContentBackward' });
-        mathfield.position = previous ? model.offsetOf(previous) : 0;
+      } finally {
+        restoringPlaceholders = false;
       }
-    } finally {
-      restoringPlaceholders = false;
+      syncFromField();
+      return true;
     }
-    syncFromField();
+    selectAtom(model, owner);
+    return true;
+  }
+
+  /** Tab / Shift-Tab: the next or previous slot of the current structure, then out of it. */
+  function moveToSlot(direction) {
+    const model = fieldModel();
+    if (!model) return false;
+    const atom = caretAtom(model);
+    const owner = atom?.parent;
+    if (!owner || owner.isRoot) {
+      mathfield.executeCommand(direction > 0 ? 'moveToNextPlaceholder' : 'moveToPreviousPlaceholder');
+      return true;
+    }
+    const branches = owner.branches ?? [];
+    const target = branches[branches.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
+    if (target !== undefined) {
+      moveCaretTo(model.offsetOf(branchAtoms(owner, target).at(-1)));
+    } else {
+      mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(owner.leftSibling);
+    }
     return true;
   }
 
@@ -445,7 +548,7 @@
     return { x: atom.type === 'first' ? box.left : box.right, y: box.top + box.height / 2 };
   }
 
-  /** Moves the caret to the nearest position above (direction -1) or below (+1). */
+  /** Moves the caret to the nearest position above (direction -1) or below (+1), or to the next line. */
   function moveVertically(direction) {
     const model = fieldModel();
     if (!model || (!model.selectionIsCollapsed && !model.selectionIsPlaceholder)) return false;
@@ -469,11 +572,109 @@
       const score = distance + 2 * Math.abs(point.x - origin.x);
       candidates.push({ offset, score, outer: enclosing.has(atom.parent) });
     }
-    const best = (list => list.reduce((a, b) => (b.score < a.score ? b : a), list[0]))(
-      candidates.some(candidate => !candidate.outer) ? candidates.filter(candidate => !candidate.outer) : candidates);
-    if (!best) return false;
-    moveCaretTo(best.offset);
+    const inner = candidates.filter(candidate => !candidate.outer);
+    const pool = inner.length ? inner : candidates;
+    const best = pool.reduce((a, b) => (a && a.score <= b.score ? a : b), null);
+    if (best) {
+      moveCaretTo(best.offset);
+      return true;
+    }
+    return moveToLine(lines.indexOf(mathfield) + direction, origin.x);
+  }
+
+  /** Focuses another line, placing the caret nearest to `x` (or at its start / end). */
+  function moveToLine(index, x, edge = null) {
+    const target = lines[index];
+    if (!target) return false;
+    target.focus();
+    mathfield = target;
+    if (edge === 'start') target.position = 0;
+    else if (edge === 'end') target.position = target.lastOffset;
+    else {
+      const box = target.getBoundingClientRect();
+      moveCaretTo(target.getOffsetFromPoint(x, box.top + box.height / 2));
+    }
     return true;
+  }
+
+  /** Return: splits the line at the caret (or opens a new line below when inside a structure). */
+  async function splitLine() {
+    const model = fieldModel();
+    if (!model) return false;
+    const index = lines.indexOf(mathfield);
+    const position = model.position;
+    const atTopLevel = model.selectionIsCollapsed && (position === 0 || model.at(position).parent === model.root);
+    let tail = '';
+    if (atTopLevel) {
+      tail = mathfield.getValue(position, mathfield.lastOffset, 'latex');
+      await setLineValue(index, mathfield.getValue(0, position, 'latex'));
+    }
+    const field = await insertLine(index + 1);
+    field.setValue(tail, { silenceNotifications: true, format: 'latex' });
+    field.focus();
+    mathfield = field;
+    field.position = 0;
+    syncFromField();
+    return true;
+  }
+
+  /** Joins line `lower` onto the end of line `upper`, keeping the caret at the seam. */
+  async function mergeLines(upper, lower) {
+    const top = lines[upper];
+    const bottom = lines[lower];
+    if (!top || !bottom) return false;
+    const seam = top.lastOffset;
+    const head = top.getValue('latex');
+    const tail = bottom.getValue('latex');
+    const glue = /\\[a-zA-Z]+$/.test(head) && /^[a-zA-Z]/.test(tail) ? ' ' : '';
+    top.focus();
+    mathfield = top;
+    const merged = await setLineValue(upper, head + glue + tail);
+    merged.focus();
+    merged.position = seam;
+    removeLine(bottom, merged);
+    syncFromField();
+    return true;
+  }
+
+  /** Handles the keys whose behavior follows classic equation editors. Returns true if handled. */
+  function handleEditingKey(event, key) {
+    const model = fieldModel();
+    if (!model) return false;
+    const index = lines.indexOf(mathfield);
+    const collapsed = model.selectionIsCollapsed;
+    const shift = event.shiftKey;
+    switch (key) {
+      case 'enter':
+        if (shift) return false;
+        splitLine();
+        return true;
+      case 'backspace':
+        if (shift) return false;
+        if (collapsed && model.position === 0 && index > 0) { mergeLines(index - 1, index); return true; }
+        return backspaceInEmptySlot();
+      case 'forwarddelete':
+        if (collapsed && model.position === mathfield.lastOffset && index < lines.length - 1) {
+          mergeLines(index, index + 1);
+          return true;
+        }
+        return false;
+      case 'tab':
+        return moveToSlot(shift ? -1 : 1);
+      case 'up':
+      case 'down':
+        if (shift) return false;
+        moveVertically(key === 'up' ? -1 : 1);
+        return true; // With nothing above or below, the caret stays where it is.
+      case 'left':
+        if (!shift && collapsed && model.position === 0) return moveToLine(index - 1, 0, 'end') || true;
+        return false;
+      case 'right':
+        if (!shift && collapsed && model.position === mathfield.lastOffset) return moveToLine(index + 1, 0, 'start') || true;
+        return false;
+      default:
+        return false;
+    }
   }
 
   function moveInCode(command) {
@@ -502,11 +703,17 @@
     if (codeFocused()) return moveInCode(command);
     if (!mathfield) return false;
     mathfield.focus();
+    const model = fieldModel();
+    const index = lines.indexOf(mathfield);
     if (command === 'up' || command === 'down') {
-      if (!moveVertically(command === 'up' ? -1 : 1) && !fieldModel()) {
+      if (!moveVertically(command === 'up' ? -1 : 1) && !model) {
         mathfield.executeCommand(command === 'up' ? 'moveUp' : 'moveDown');
       }
       return true;
+    }
+    if (command === 'left' && model?.selectionIsCollapsed && model.position === 0) return moveToLine(index - 1, 0, 'end') || true;
+    if (command === 'right' && model?.selectionIsCollapsed && model.position === mathfield.lastOffset) {
+      return moveToLine(index + 1, 0, 'start') || true;
     }
     mathfield.executeCommand({
       left: 'moveToPreviousChar', right: 'moveToNextChar',
@@ -515,10 +722,12 @@
     return true;
   }
 
+  // ---------------------------------------------------------------- synchronization
+
   function syncFromField() {
     if (!mathfield) return;
     if (!restoringPlaceholders) restorePlaceholders();
-    const latex = portableLatex(mathfield.getValue('latex'));
+    const latex = documentLatex();
     if (latex === state.latex) return;
     state.latex = latex;
     if (!codeFocused()) codeArea.value = latex;
@@ -530,7 +739,7 @@
     clearTimeout(codeTimer);
     codeTimer = null;
     const latex = codeArea.value;
-    if (mathfield) setFieldValue(latex);
+    if (lines.length) setDocumentLatex(latex);
     if (latex !== state.latex) {
       state.latex = latex;
       notifyChange();
@@ -551,11 +760,15 @@
 
   // ---------------------------------------------------------------- presentation
 
+  function styleField(field) {
+    field.style.fontSize = `${Math.round(state.fontSize * EDIT_SCALE)}px`;
+    // The default ink follows the theme on screen; any other color is shown as chosen.
+    field.style.color = state.color.toUpperCase() === DEFAULT_INK ? '' : state.color;
+    field.defaultMode = state.displayStyle ? 'math' : 'inline-math';
+  }
+
   function applyPresentation() {
-    if (!mathfield) return;
-    mathfield.style.fontSize = `${Math.round(state.fontSize * EDIT_SCALE)}px`;
-    mathfield.style.color = state.color;
-    mathfield.defaultMode = state.displayStyle ? 'math' : 'inline-math';
+    lines.forEach(styleField);
     $('font-size').value = String(state.fontSize);
     $('color').value = state.color.toLowerCase();
   }
@@ -610,29 +823,16 @@
     return `${item.latex.replace(/#[@0-9?]/g, '□')}${keys.length ? `  (${keys.join(', ')})` : ''}`;
   }
 
-  function renderTabs() {
-    tabs.replaceChildren(...VT_PALETTE.map(category => {
-      const button = document.createElement('button');
-      button.setAttribute('role', 'tab');
-      button.textContent = category.tab;
-      button.title = category.title;
-      button.dataset.category = category.id;
-      button.addEventListener('click', () => showCategory(category.id));
-      return button;
-    }));
-  }
-
-  const renderedCategories = new Map();
-
-  function showCategory(id) {
-    ui.category = id;
-    for (const button of tabs.children) button.setAttribute('aria-selected', String(button.dataset.category === id));
-    if (!renderedCategories.has(id)) {
-      const category = VT_PALETTE.find(entry => entry.id === id);
-      const tiles = document.createElement('div');
-      tiles.className = 'tiles';
-      tiles.dataset.tint = category.tint;
-      tiles.style.setProperty('--columns', category.columns);
+  /** All categories side by side in one horizontally scrolling strip; the tabs jump between them. */
+  function renderPalette() {
+    const groups = VT_PALETTE.map(category => {
+      const group = document.createElement('section');
+      group.className = 'group';
+      group.dataset.category = category.id;
+      group.dataset.tint = category.tint;
+      group.setAttribute('aria-label', category.title);
+      group.style.setProperty('--columns', Math.ceil(category.items.length / 4)); // Four rows, filled row by row.
+      group.style.setProperty('--tint', `var(--tint-${category.tint})`);
       for (const item of category.items) {
         const tile = document.createElement('button');
         tile.className = 'tile';
@@ -645,29 +845,51 @@
         tile.addEventListener('click', () => insertItem(item));
         tile.addEventListener('contextmenu', event => {
           event.preventDefault();
-          startRecording({ insert: item.id }, tile, glyphTitle(item));
+          startRecording({ insert: item.id }, tile, item.id.replace(/-/g, ' '));
         });
-        tiles.append(tile);
+        group.append(tile);
       }
-      renderedCategories.set(id, tiles);
-    }
-    grid.replaceChildren(renderedCategories.get(id));
+      return group;
+    });
+    strip.replaceChildren(...groups);
+
+    tabs.replaceChildren(...VT_PALETTE.map(category => {
+      const button = document.createElement('button');
+      button.setAttribute('role', 'tab');
+      button.title = category.title;
+      button.dataset.category = category.id;
+      button.append(glyph(category.icon));
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => showCategory(category.id, { scroll: true }));
+      return button;
+    }));
     refreshKeyHints();
+  }
+
+  function showCategory(id, { scroll = false } = {}) {
+    for (const button of tabs.children) button.setAttribute('aria-selected', String(button.dataset.category === id));
+    if (scroll) {
+      const group = strip.querySelector(`[data-category="${id}"]`);
+      strip.scrollTo({ left: group.offsetLeft - strip.offsetLeft - 8, behavior: 'smooth' });
+    }
     try { localStorage.setItem('vt.category', id); } catch (_) { /* Optional. */ }
   }
 
-  function glyphTitle(item) {
-    return item.id.replace(/-/g, ' ');
+  function syncTabToScroll() {
+    const left = strip.scrollLeft + 24;
+    let current = VT_PALETTE[0].id;
+    for (const group of strip.children) {
+      if (group.offsetLeft - strip.offsetLeft <= left) current = group.dataset.category;
+    }
+    for (const button of tabs.children) button.setAttribute('aria-selected', String(button.dataset.category === current));
   }
 
   function refreshKeyHints() {
-    for (const tiles of renderedCategories.values()) {
-      for (const tile of tiles.children) {
-        const item = paletteById.get(tile.dataset.id);
-        const combos = combosFor({ insert: item.id });
-        tile.querySelector('.key').textContent = combos.length ? displayCombo(combos[0]) : '';
-        tile.title = itemTitle(item);
-      }
+    for (const tile of strip.querySelectorAll('.tile')) {
+      const item = paletteById.get(tile.dataset.id);
+      const combos = combosFor({ insert: item.id });
+      tile.querySelector('.key').textContent = combos.length ? displayCombo(combos[0]) : '';
+      tile.title = itemTitle(item);
     }
   }
 
@@ -709,13 +931,10 @@
       return stopRecording();
     }
     const combo = comboFromEvent(event);
-    if (event.metaKey) {
-      $('recorder').querySelector('.recorder-keys').textContent = '⌘ shortcuts belong to the menus';
-      return;
-    }
-    if (!event.ctrlKey && !event.altKey && !(event.shiftKey && (key === 'enter' || key === 'tab'))) {
-      $('recorder').querySelector('.recorder-keys').textContent = 'Include ⌃ or ⌥';
-      return;
+    const message = text => { $('recorder').querySelector('.recorder-keys').textContent = text; };
+    if (RESERVED.has(combo)) return message(`${displayCombo(combo)} is a menu command`);
+    if (!event.ctrlKey && !event.altKey && !event.metaKey && !(event.shiftKey && (key === 'enter' || key === 'tab'))) {
+      return message('Include ⌘, ⌃ or ⌥');
     }
     const previous = keymap[combo];
     if (recording.replacing && recording.replacing !== combo) unassign(recording.replacing);
@@ -800,22 +1019,14 @@
         return;
       }
     }
-    const plain = !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-    const inField = mathfield && event.composedPath().includes(mathfield);
-    if (plain && inField) {
-      const handled = key === 'backspace' ? backspaceInEmptySlot()
-        // With nothing above or below, the caret stays where it is.
-        : key === 'up' ? (moveVertically(-1), !!fieldModel())
-        : key === 'down' ? (moveVertically(1), !!fieldModel()) : false;
-      if (handled) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
-    }
     const combo = comboFromEvent(event);
-    if (!combo || !keymap[combo]) return;
-    if (runShortcut(combo)) {
+    if (combo && keymap[combo] && runShortcut(combo)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    const inField = lines.some(field => event.composedPath().includes(field));
+    if (inField && !event.ctrlKey && !event.altKey && !event.metaKey && handleEditingKey(event, key)) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
@@ -852,9 +1063,20 @@
     return next;
   }
 
+  /** One TeX expression for the whole document: several lines become a left-aligned array. */
+  function documentTeX(latex, displayStyle) {
+    // Trailing whitespace goes, except an escaped space (\ ) that the user typed.
+    const trim = line => line.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, '');
+    const parts = splitLines(cleanLatex(latex)).map(line => trim(portableLatex(line))).filter(Boolean)
+      // An empty slot inside \text{} would put a math symbol in text mode.
+      .map(line => line.replace(/\\text\{\\placeholder\{\}\}/g, '\\placeholder{}'));
+    if (parts.length <= 1) return parts[0] ?? '';
+    const style = displayStyle ? '\\displaystyle ' : '';
+    return `\\begin{array}{l}${parts.map(line => style + line).join(' \\\\[0.4em] ')}\\end{array}`;
+  }
+
   async function buildResult(snapshot) {
-    // An empty slot inside \text{} would put a math symbol in text mode.
-    const latex = portableLatex(cleanLatex(snapshot.latex)).replace(/\\text\{\\placeholder\{\}\}/g, '\\placeholder{}');
+    const latex = documentTeX(snapshot.latex, snapshot.displayStyle);
     if (!latex) return { valid: false, empty: true, error: 'The equation is empty.' };
     try {
       resetTeXState();
@@ -918,8 +1140,8 @@
     MathfieldElement.openUrl = () => {};
     await customElements.whenDefined('math-field');
 
-    scratchField = await createField(document.body, { scratch: true });
-    mathfield = await createField($('field-host'));
+    scratchField = await createField({ scratch: true });
+    mathfield = await insertLine(0);
 
     await MathJax.startup.promise;
     const handlers = MathJax.startup.document.inputJax.find(jax => jax.name === 'TeX').parseOptions.handlers;
@@ -928,10 +1150,15 @@
 
     applyPresentation();
     overrides = sanitizeOverrides(window.VT_USER_SHORTCUTS || {});
+    renderPalette();
     rebuildKeymap();
     let category = VT_PALETTE[0].id;
     try { category = localStorage.getItem('vt.category') || category; } catch (_) { /* Optional. */ }
-    showCategory(VT_PALETTE.some(entry => entry.id === category) ? category : VT_PALETTE[0].id);
+    if (VT_PALETTE.some(entry => entry.id === category)) {
+      const group = strip.querySelector(`[data-category="${category}"]`);
+      strip.scrollLeft = group.offsetLeft - strip.offsetLeft - 8;
+    }
+    syncTabToScroll();
     mathfield.focus();
     post('ready', { mathlive: MathfieldElement.version, mathjax: MathJax.version });
   })().catch(error => {
@@ -988,11 +1215,15 @@
     if (recording && !$('recorder').contains(event.target)) stopRecording();
   });
 
+  // A click below the last line puts the caret at the end of the document.
   canvas.addEventListener('mousedown', event => {
-    if (event.target === canvas || event.target.id === 'field-host') {
+    if (event.target === canvas || event.target === fieldHost) {
       event.preventDefault();
-      mathfield?.focus();
-      mathfield?.executeCommand('moveToMathfieldEnd');
+      const last = lines.at(-1);
+      if (!last) return;
+      last.focus();
+      mathfield = last;
+      last.executeCommand('moveToMathfieldEnd');
     }
   });
 
@@ -1003,6 +1234,15 @@
 
   // The native host limits input methods to Roman keyboards while the equation has focus.
   document.addEventListener('focusin', () => post('focus', { math: document.activeElement?.tagName === 'MATH-FIELD' }));
+
+  strip.addEventListener('scroll', syncTabToScroll, { passive: true });
+  // A vertical scroll wheel scrolls the strip sideways.
+  strip.addEventListener('wheel', event => {
+    if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      strip.scrollLeft += event.deltaY;
+      event.preventDefault();
+    }
+  }, { passive: false });
 
   codeArea.addEventListener('input', () => {
     clearTimeout(codeTimer);
@@ -1046,7 +1286,6 @@
     splitter.addEventListener('pointerup', () => splitter.removeEventListener('pointermove', move), { once: true });
   });
 
-  renderTabs();
   setMode('symbols');
 
   // ---------------------------------------------------------------- API for the native host
@@ -1058,7 +1297,7 @@
       const latexChanged = next.latex !== state.latex;
       Object.assign(state, next);
       if (latexChanged) {
-        await setFieldValue(state.latex);
+        await setDocumentLatex(state.latex);
         codeArea.value = state.latex;
       }
       applyPresentation();

@@ -104,6 +104,9 @@ public struct EquationDocument: Codable, Equatable, Sendable {
             ? String(colorHex.dropFirst()).uppercased() : "17191D"
         let size = fontSize.isFinite ? min(Self.fontSizes.upperBound, max(Self.fontSizes.lowerBound, fontSize)) : 32
         let style = displayStyle ? #"\displaystyle"# : #"\textstyle"#
+        // Several lines become a left-aligned array, one equation per row.
+        let rows = lines.map(Self.trimmed).filter { !$0.isEmpty }
+        let body = rows.count > 1 ? "\\begin{array}{l}\n" + rows.map { "\\displaystyle " + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}" : latex
         return """
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}
@@ -113,10 +116,40 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         \\begin{document}
         \\color{ink}\\fontsize{\(Self.format(size))}{\(Self.format(size * 1.2))}\\selectfont
         \\everymath{\(style)}
-        $\(latex)$
+        $\(body)$
         \\end{document}
 
         """
+    }
+
+    /// The document's equation lines. A newline inside braces or an environment (an `aligned`
+    /// block written over several lines, say) belongs to its line rather than starting a new one.
+    public var lines: [String] {
+        var result: [String] = []
+        var current: String?
+        var depth = 0
+        for raw in latex.components(separatedBy: "\n") {
+            current = current.map { $0 + "\n" + raw } ?? raw
+            var code = raw.replacingOccurrences(of: #"\\"#, with: "")
+                .replacingOccurrences(of: #"\{"#, with: "").replacingOccurrences(of: #"\}"#, with: "")
+            if let comment = code.firstIndex(of: "%") { code = String(code[..<comment]) }
+            depth += code.filter { $0 == "{" }.count - code.filter { $0 == "}" }.count
+            depth += code.components(separatedBy: #"\begin{"#).count - code.components(separatedBy: #"\end{"#).count
+            if depth <= 0 {
+                result.append(current ?? "")
+                current = nil
+                depth = 0
+            }
+        }
+        if let current { result.append(current) }
+        return result.isEmpty ? [""] : result
+    }
+
+    /// Removes surrounding whitespace, keeping a trailing escaped space (`\ `).
+    private static func trimmed(_ line: String) -> String {
+        var text = Substring(line.drop { $0.isWhitespace })
+        while let last = text.last, last.isWhitespace, !text.dropLast().hasSuffix("\\") { text = text.dropLast() }
+        return String(text)
     }
 
     private static func format(_ value: Double) -> String {
