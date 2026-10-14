@@ -20,6 +20,9 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, functions, matrices and arrows — integrals, operators and matrices in large,
   display-style tiles.
+- **Type commands like an input method.** Type `\` and a name (`\mu`, `\frac`, `\sum`…): a
+  candidate bar shows matching symbols and templates. `Space` takes the first, `1`–`8` pick one,
+  `↩` keeps the command as typed, `⎋` cancels, `,` `.` page through. Works in the LaTeX pane too.
 - **Shortcuts for everything.** Right-click any palette button to give it a shortcut, or edit
   them all in *Settings › Keyboard Shortcuts* (`⌘,`).
 - **Vector export** (PDF, SVG), PNG at 1×–4×, standalone LaTeX, MathML; copy as image or LaTeX.
@@ -72,7 +75,7 @@ LaTeX.
 | Switch between symbols and LaTeX code | `⌃⇥` |
 | Apply the LaTeX code and return to the equation | `⇧↩` |
 | Type the next letter in Greek (⇧ for capitals) | `⌘G`, then a letter |
-| Font of the selection (or of what you type next): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold, `⌘I` italic) |
+| Font of the selection (or of the symbol before the caret): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold, `⌘I` italic) |
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
 | Matrix: delete row / column | `⌥⌘↑` / `⌥⌘←` |
 | Copy as image / copy LaTeX | `⌘C` / `⌘T` |

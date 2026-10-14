@@ -281,41 +281,56 @@
     return result;
   }
 
-  // MathLive's style for what is typed next, per font command (null: no font).
-  const FONT_STYLES = {
-    mathrm: { variant: 'normal', variantStyle: 'up' }, null: { variant: 'normal', variantStyle: '' },
-    mathit: { variant: 'normal', variantStyle: 'italic' }, mathbf: { variant: 'normal', variantStyle: 'bold' },
-    boldsymbol: { variant: 'normal', variantStyle: 'bolditalic' }, mathsf: { variant: 'sans-serif', variantStyle: '' },
-    mathtt: { variant: 'monospace', variantStyle: '' }, mathcal: { variant: 'calligraphic', variantStyle: '' },
-    mathscr: { variant: 'script', variantStyle: '' }, mathfrak: { variant: 'fraktur', variantStyle: '' },
-  };
+  /** What is typed next has no font, even right after a restyled symbol (MathLive would continue its style). */
+  function resetTypingStyle(field) {
+    field.applyStyle({ variant: 'normal', variantStyle: '' }, { operation: 'set' });
+  }
 
-  /** Sets the font of the selection (or of what is typed next): `command` is e.g. 'mathbf', or null for none. */
+  /**
+   * Sets the font (`command` such as 'mathbf', or null for none) of the selection, or else of the
+   * one symbol or structure just before the caret — like an accent. With nothing before the caret
+   * it does nothing.
+   */
   function setFont(command) {
     const wrap = text => {
       const inner = stripFonts(text);
       return command ? `\\${command}{${inner}}` : inner;
     };
     if (codeFocused()) {
-      const { selectionStart: start, selectionEnd: end, value } = codeArea;
-      if (start === end) return command ? insertIntoCode(`\\${command}{#0}`) : true;
-      codeArea.setRangeText(wrap(value.slice(start, end)), start, end, 'select');
+      const { selectionStart, selectionEnd, value } = codeArea;
+      let start = selectionStart;
+      if (start === selectionEnd) {
+        // The command, group or character before the caret.
+        const before = /(\\[a-zA-Z]+(?:\{[^{}]*\})?|\{[^{}]*\}|[^\s{}\\])$/.exec(value.slice(0, selectionEnd));
+        if (!before) return true;
+        start = selectionEnd - before[0].length;
+      }
+      codeArea.setRangeText(wrap(value.slice(start, selectionEnd)), start, selectionEnd,
+        selectionStart === selectionEnd ? 'end' : 'select');
       codeArea.dispatchEvent(new Event('input'));
       return true;
     }
     const model = fieldModel();
     if (!mathfield || !model) return false;
     mathfield.focus();
-    if (model.selectionIsCollapsed || model.selectionIsPlaceholder) {
-      mathfield.applyStyle(FONT_STYLES[command], { operation: 'set' });
-      return true;
+    const hadSelection = !model.selectionIsCollapsed && !model.selectionIsPlaceholder;
+    let start, end;
+    if (hadSelection) {
+      [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    } else {
+      const before = model.at(model.position);
+      if (model.selectionIsPlaceholder || !before || before.type === 'first') return true; // Nothing to restyle.
+      end = model.position;
+      start = end - (before.children?.length ?? 0) - 1;
     }
-    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
     const selected = mathfield.getValue(start, end, 'latex');
     const topLevel = model.at(start + 1)?.parent === model.root && model.at(end)?.parent === model.root;
     if (!topLevel) {
       // Inside a structure: MathLive's insert (it writes bold Latin letters as \mathbf).
-      mathfield.insert(wrap(selected), { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'item', feedback: false });
+      mathfield.selection = { ranges: [[start, end]] };
+      mathfield.insert(wrap(selected), { format: 'latex', insertionMode: 'replaceSelection',
+        selectionMode: hadSelection ? 'item' : 'after', feedback: false });
+      if (!hadSelection) resetTypingStyle(mathfield);
       syncFromField();
       return true;
     }
@@ -328,7 +343,12 @@
     const remaining = field.lastOffset - end;
     setLineValue(lines.indexOf(field), before + glue(before, middle) + middle + glue(middle, after) + after).then(updated => {
       updated.focus();
-      updated.selection = { ranges: [[start, updated.lastOffset - remaining]] };
+      const newEnd = updated.lastOffset - remaining;
+      if (hadSelection) updated.selection = { ranges: [[start, newEnd]] };
+      else {
+        updated.position = newEnd;
+        resetTypingStyle(updated);
+      }
       syncFromField();
     });
     return true;
@@ -531,6 +551,7 @@
 
   /** Shows `latex` (lines separated by newlines) in the editor. */
   async function setDocumentLatex(latex) {
+    if (composing?.mode === 'math') closeComposition();
     const parts = splitLines(cleanLatex(latex));
     loading = true;
     try {
@@ -1010,7 +1031,7 @@
     const latex = documentLatex();
     if (latex === state.latex) return;
     state.latex = latex;
-    if (!codeFocused()) codeArea.value = latex;
+    if (ui.mode === 'code' && !codeFocused()) codeArea.value = latex; // setMode fills it when shown.
     notifyChange();
     scheduleValidation();
   }
@@ -1283,10 +1304,282 @@
     $('shortcut-filter').focus();
   }
 
+  // ---------------------------------------------------------------- command candidates
+  //
+  // Typing \name shows candidates the way an input method does: Space takes the first, 1–8 take
+  // one by number, Enter keeps the command as typed, Esc cancels, and , . (or ← → PgUp PgDn) page.
+
+  const PAGE_SIZE = 8;
+  let commandIndex = null;
+  let composing = null; // { mode: 'math' | 'code', text, page, list, start }
+  const glyphCache = new Map();
+
+  function buildCommandIndex() {
+    const entries = [];
+    const seen = new Set();
+    const add = entry => {
+      if (seen.has(entry.label)) return;
+      seen.add(entry.label);
+      entries.push(entry);
+    };
+    for (const category of VT_PALETTE) {
+      for (const item of category.items) {
+        const name = /^\\([a-zA-Z]+)/.exec(item.latex)?.[1];
+        if (!name) continue;
+        const label = item.latex.replace(/#[@0-9?]/g, '').replace(/\s+/g, '');
+        add({ name, label, item, preview: previewLatex(item) });
+      }
+    }
+    for (const name of VT_COMMANDS) add({ name, label: `\\${name}`, latex: `\\${name}`, preview: `\\${name}` });
+    const common = new Map(VT_COMMON_COMMANDS.map((name, index) => [name, index]));
+    entries.forEach((entry, index) => { entry.rank = common.has(entry.name) ? common.get(entry.name) - 1000 : index; });
+    return entries;
+  }
+
+  function isSubsequence(query, name) {
+    let at = 0;
+    for (const char of name) if (char === query[at]) at += 1;
+    return at === query.length;
+  }
+
+  /** Candidates for `query` (the letters after \): exact, prefix, contains, subsequence, then first letter. */
+  function candidatesFor(query) {
+    commandIndex ??= buildCommandIndex();
+    if (!query) return commandIndex.filter(entry => entry.rank < 0).sort((a, b) => a.rank - b.rank);
+    const lower = query.toLowerCase();
+    const tier = entry => {
+      const name = entry.name;
+      if (name === query) return 0;
+      if (name.toLowerCase() === lower) return 0.5;
+      if (name.startsWith(query)) return 1;
+      if (name.toLowerCase().startsWith(lower)) return 1.5;
+      if (name.toLowerCase().includes(lower)) return 2;
+      if (isSubsequence(lower, name.toLowerCase())) return 3;
+      if (name.toLowerCase().includes(lower[0])) return 4;
+      return Infinity;
+    };
+    // Each command once (its first variant), except the one typed exactly, which shows every variant.
+    const shown = new Set();
+    return commandIndex.map(entry => ({ entry, tier: tier(entry) }))
+      .filter(match => match.tier < Infinity)
+      .sort((a, b) => a.tier - b.tier || a.entry.rank - b.entry.rank || a.entry.name.length - b.entry.name.length)
+      .filter(({ entry, tier: level }) => {
+        if (level === 0) return true;
+        if (shown.has(entry.name)) return false;
+        shown.add(entry.name);
+        return true;
+      })
+      .slice(0, PAGE_SIZE * 6)
+      .map(match => match.entry);
+  }
+
+  function candidateGlyph(entry) {
+    if (!glyphCache.has(entry.label)) glyphCache.set(entry.label, glyph(entry.preview));
+    return glyphCache.get(entry.label).cloneNode(true);
+  }
+
+  /** Viewport coordinates of a textarea's caret, measured with a mirror element. */
+  function textareaCaretPoint(textarea, index) {
+    const style = getComputedStyle(textarea);
+    const mirror = document.createElement('div');
+    for (const property of ['font', 'letterSpacing', 'lineHeight', 'padding', 'border', 'boxSizing', 'tabSize', 'textIndent']) {
+      mirror.style[property] = style[property];
+    }
+    Object.assign(mirror.style, { position: 'fixed', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
+      width: `${textarea.clientWidth}px`, left: '0', top: '0' });
+    mirror.textContent = textarea.value.slice(0, index);
+    const marker = document.createElement('span');
+    marker.textContent = '​';
+    mirror.append(marker);
+    document.body.append(mirror);
+    const box = textarea.getBoundingClientRect();
+    const point = { x: box.left + marker.offsetLeft - textarea.scrollLeft, top: box.top + marker.offsetTop - textarea.scrollTop,
+      height: marker.offsetHeight };
+    mirror.remove();
+    return point;
+  }
+
+  function renderCandidates() {
+    const panel = $('candidates');
+    const preedit = panel.querySelector('.cand-preedit');
+    const list = panel.querySelector('.cand-list');
+    composing.list = candidatesFor(composing.text);
+    const pages = Math.max(1, Math.ceil(composing.list.length / PAGE_SIZE));
+    composing.page = Math.min(Math.max(composing.page, 0), pages - 1);
+    const shown = composing.list.slice(composing.page * PAGE_SIZE, (composing.page + 1) * PAGE_SIZE);
+    list.replaceChildren(...shown.map((entry, index) => {
+      const button = document.createElement('button');
+      button.className = `cand${index === 0 ? ' current' : ''}`;
+      const label = document.createElement('span');
+      label.className = 'cand-label';
+      label.textContent = `${index + 1}.${entry.label}`;
+      const glyphBox = document.createElement('span');
+      glyphBox.className = 'cand-glyph';
+      glyphBox.append(candidateGlyph(entry));
+      button.append(label, glyphBox);
+      button.addEventListener('mousedown', event => { event.preventDefault(); chooseCandidate(entry); });
+      return button;
+    }));
+    if (pages > 1) {
+      const more = document.createElement('span');
+      more.className = 'cand-more';
+      more.textContent = `${composing.page + 1}/${pages}`;
+      list.append(more);
+    }
+    panel.hidden = false;
+
+    // Position: the typed command sits at the caret; the bar goes below the line.
+    let caretX;
+    let lineBottom;
+    if (composing.mode === 'math') {
+      const model = fieldModel();
+      const point = model && caretPoint(model, model.position);
+      const fieldBox = mathfield.getBoundingClientRect();
+      const fontSize = parseFloat(getComputedStyle(mathfield).fontSize);
+      caretX = point?.x ?? fieldBox.left;
+      preedit.hidden = false;
+      preedit.style.setProperty('--preedit-size', `${Math.round(fontSize * 0.8)}px`);
+      preedit.textContent = `\\${composing.text}`;
+      preedit.style.left = `${caretX}px`;
+      preedit.style.top = `${(point?.y ?? fieldBox.top + fieldBox.height / 2) - preedit.offsetHeight / 2}px`;
+      lineBottom = fieldBox.bottom;
+    } else {
+      const point = textareaCaretPoint(codeArea, composing.start);
+      preedit.hidden = true;
+      caretX = point.x;
+      lineBottom = point.top + point.height + 2;
+    }
+    const width = list.offsetWidth;
+    list.style.left = `${Math.max(8, Math.min(innerWidth - width - 8, caretX - 4))}px`;
+    const below = lineBottom + 4;
+    list.style.top = `${below + list.offsetHeight > innerHeight - 8 ? Math.max(8, lineBottom - list.offsetHeight - 60) : below}px`;
+  }
+
+  /** Renders candidate glyphs in idle time, a few at a time, so the bar appears without delay. */
+  function prewarmCandidateGlyphs() {
+    commandIndex ??= buildCommandIndex();
+    const pending = [...commandIndex].sort((a, b) => a.rank - b.rank);
+    const step = () => {
+      const until = performance.now() + 8;
+      while (pending.length && performance.now() < until) {
+        const entry = pending.shift();
+        if (!glyphCache.has(entry.label)) glyphCache.set(entry.label, glyph(entry.preview));
+      }
+      if (pending.length) setTimeout(step, 30);
+    };
+    setTimeout(step, 500);
+  }
+
+  function startComposition(mode, text = '', start = 0) {
+    composing = { mode, text, page: 0, list: [], start };
+    renderCandidates();
+  }
+
+  function closeComposition() {
+    composing = null;
+    $('candidates').hidden = true;
+  }
+
+  function chooseCandidate(entry) {
+    const state = composing;
+    closeComposition();
+    if (!state || !entry) return;
+    if (state.mode === 'code') {
+      codeArea.focus();
+      codeArea.setRangeText('', state.start, codeArea.selectionStart, 'end');
+      insertIntoCode(entry.item ? entry.item.latex : entry.latex);
+      return;
+    }
+    mathfield?.focus();
+    if (entry.item) insertItem(entry.item);
+    else insertLatex(entry.latex);
+  }
+
+  /** Enter: the command as typed if it exists, otherwise the best candidate (nothing for a lone backslash). */
+  function commitTyped() {
+    const state = composing;
+    if (!state) return;
+    const exact = state.list.find(entry => entry.name === state.text && entry.latex === `\\${state.text}`)
+      ?? state.list.find(entry => entry.name === state.text);
+    if (exact) return chooseCandidate(exact);
+    if (state.text && state.list.length) return chooseCandidate(state.list[0]);
+    closeComposition();
+  }
+
+  /** Keys while candidates are shown. Returns true if the key was used. */
+  function handleCompositionKey(event) {
+    const { key } = event;
+    if (event.metaKey || event.ctrlKey || event.altKey) { closeComposition(); return false; }
+    const page = delta => { composing.page += delta; renderCandidates(); return true; };
+    const choose = index => { chooseCandidate(composing.list[composing.page * PAGE_SIZE + index]); return true; };
+    if (composing.mode === 'code') {
+      // Letters and Backspace edit the text itself; the input event refreshes the candidates.
+      if (key === ' ') return composing.list.length ? choose(0) : (closeComposition(), false);
+      if (/^[1-8]$/.test(key)) return composing.page * PAGE_SIZE + Number(key) - 1 < composing.list.length ? choose(Number(key) - 1) : false;
+      if (key === 'Enter' || key === 'Escape') { closeComposition(); return true; }
+      if (key === '.' || key === 'PageDown') return page(1);
+      if (key === ',' || key === 'PageUp') return page(-1);
+      return false;
+    }
+    if (/^[a-zA-Z]$/.test(key)) { composing.text += key; composing.page = 0; renderCandidates(); return true; }
+    switch (key) {
+      case 'Backspace':
+        if (!composing.text) closeComposition();
+        else { composing.text = composing.text.slice(0, -1); composing.page = 0; renderCandidates(); }
+        return true;
+      case ' ': case 'Tab':
+        if (composing.list.length) return choose(0);
+        commitTyped();
+        return true;
+      case 'Enter': commitTyped(); return true;
+      case 'Escape': closeComposition(); return true;
+      case '.': case 'PageDown': case 'ArrowRight': return page(1);
+      case ',': case 'PageUp': case 'ArrowLeft': return page(-1);
+      case 'ArrowUp': case 'ArrowDown': return true;
+      case '\\': commitTyped(); startComposition('math'); return true;
+      default:
+        if (/^[1-8]$/.test(key)) {
+          if (composing.page * PAGE_SIZE + Number(key) - 1 < composing.list.length) return choose(Number(key) - 1);
+          return true;
+        }
+        if (key.length === 1) { commitTyped(); return false; } // Another character: keep the command and type on.
+        return false;
+    }
+  }
+
+  /** In the code pane, a \name before the caret shows candidates. */
+  function updateCodeComposition() {
+    const match = /\\([a-zA-Z]*)$/.exec(codeArea.value.slice(0, codeArea.selectionStart));
+    if (!match || codeArea.selectionStart !== codeArea.selectionEnd) {
+      if (composing?.mode === 'code') closeComposition();
+      return;
+    }
+    const start = codeArea.selectionStart - match[0].length;
+    if (composing?.mode === 'code' && composing.start === start) {
+      composing.text = match[1];
+      composing.page = 0;
+      renderCandidates();
+    } else {
+      startComposition('code', match[1], start);
+    }
+  }
+
   // ---------------------------------------------------------------- keyboard
 
   window.addEventListener('keydown', event => {
     if (recording) return handleRecordingKey(event);
+    if (composing && handleCompositionKey(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    if (event.key === '\\' && !event.metaKey && !event.ctrlKey && !event.altKey &&
+        lines.some(field => event.composedPath().includes(field))) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      startComposition('math');
+      return;
+    }
     if (!$('shortcuts').hidden) {
       if (event.key === 'Escape') { $('shortcuts').hidden = true; mathfield?.focus(); event.preventDefault(); }
       return;
@@ -1442,6 +1735,7 @@
     syncTabToScroll();
     mathfield.focus();
     post('ready', { mathlive: MathfieldElement.version, mathjax: MathJax.version });
+    prewarmCandidateGlyphs();
   })().catch(error => {
     post('error', { message: plainError(error) });
     throw error;
@@ -1492,6 +1786,7 @@
     });
   }
   document.addEventListener('mousedown', event => {
+    if (composing && !$('candidates').contains(event.target)) closeComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
     if (recording && !$('recorder').contains(event.target)) stopRecording();
   });
@@ -1526,9 +1821,12 @@
   }, { passive: false });
 
   codeArea.addEventListener('input', () => {
+    updateCodeComposition();
     clearTimeout(codeTimer);
-    codeTimer = setTimeout(applyCodeNow, 150);
+    codeTimer = setTimeout(applyCodeNow, 40);
   });
+  codeArea.addEventListener('blur', () => { if (composing?.mode === 'code') closeComposition(); });
+  window.addEventListener('blur', closeComposition);
   codeArea.addEventListener('keydown', event => {
     if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
       event.preventDefault();

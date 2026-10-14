@@ -15,6 +15,9 @@ cp node_modules/mathlive/fonts/*.woff2 "$WEB/mathlive/fonts/"
 cp node_modules/mathjax-full/es5/tex-svg-full.js "$WEB/mathjax/"
 cp node_modules/mathjax-full/LICENSE "$WEB/mathjax/LICENSE.txt"
 
+# Local fixes to the bundled engines (see scripts/patches).
+python3 "$ROOT/scripts/patches/mathlive-boldsymbol.py" "$WEB/mathlive/mathlive.min.js"
+
 node -e '
 const fs = require("fs");
 const version = name => require(`./node_modules/${name}/package.json`).version;

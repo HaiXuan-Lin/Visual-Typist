@@ -222,3 +222,52 @@
     });
   }
 })();
+
+// Further commands offered when typing \name (the palette items are offered too).
+window.VT_COMMANDS = [
+  // Letters and symbols
+  'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma', 'Upsilon', 'Phi', 'Psi', 'Omega', 'digamma',
+  'imath', 'jmath', 'hbar', 'hslash', 'ell', 'wp', 'Re', 'Im', 'aleph', 'beth', 'gimel', 'partial', 'nabla',
+  'infty', 'emptyset', 'varnothing', 'prime', 'backprime', 'top', 'bot', 'angle', 'measuredangle',
+  'sphericalangle', 'triangle', 'square', 'blacksquare', 'lozenge', 'star', 'bigstar', 'dagger', 'ddagger',
+  'clubsuit', 'diamondsuit', 'heartsuit', 'spadesuit', 'flat', 'natural', 'sharp', 'checkmark', 'circledR',
+  'degree', 'backslash', 'surd', 'complement',
+  // Operators
+  'pm', 'mp', 'times', 'div', 'cdot', 'ast', 'circ', 'bullet', 'oplus', 'ominus', 'otimes', 'oslash', 'odot',
+  'cap', 'cup', 'sqcap', 'sqcup', 'uplus', 'wedge', 'vee', 'setminus', 'wr', 'amalg', 'ltimes', 'rtimes',
+  'boxplus', 'boxminus', 'boxtimes', 'boxdot', 'dotplus', 'divideontimes', 'intercal', 'barwedge',
+  // Relations
+  'le', 'leq', 'ge', 'geq', 'ne', 'neq', 'leqslant', 'geqslant', 'll', 'gg', 'lll', 'ggg', 'equiv', 'approx',
+  'approxeq', 'sim', 'simeq', 'cong', 'doteq', 'propto', 'prec', 'succ', 'preceq', 'succeq', 'perp', 'parallel',
+  'nparallel', 'mid', 'nmid', 'in', 'notin', 'ni', 'subset', 'supset', 'subseteq', 'supseteq', 'subsetneq',
+  'supsetneq', 'sqsubseteq', 'sqsupseteq', 'vdash', 'dashv', 'models', 'vDash', 'asymp', 'bowtie', 'smile',
+  'frown', 'lesssim', 'gtrsim', 'nless', 'ngtr', 'nleq', 'ngeq', 'nsim', 'ncong', 'coloneqq', 'triangleq',
+  'therefore', 'because', 'multimap',
+  // Logic
+  'forall', 'exists', 'nexists', 'neg', 'lnot', 'land', 'lor', 'implies', 'impliedby', 'iff',
+  // Arrows
+  'to', 'gets', 'leftarrow', 'rightarrow', 'leftrightarrow', 'Leftarrow', 'Rightarrow', 'Leftrightarrow',
+  'longleftarrow', 'longrightarrow', 'longleftrightarrow', 'Longleftarrow', 'Longrightarrow', 'Longleftrightarrow',
+  'uparrow', 'downarrow', 'updownarrow', 'Uparrow', 'Downarrow', 'Updownarrow', 'mapsto', 'longmapsto',
+  'hookleftarrow', 'hookrightarrow', 'nearrow', 'searrow', 'swarrow', 'nwarrow', 'leftharpoonup',
+  'rightharpoonup', 'leftharpoondown', 'rightharpoondown', 'rightleftharpoons', 'leftrightarrows',
+  'rightleftarrows', 'twoheadrightarrow', 'rightsquigarrow', 'leadsto', 'circlearrowleft', 'circlearrowright',
+  // Delimiters and dots
+  'langle', 'rangle', 'lfloor', 'rfloor', 'lceil', 'rceil', 'vert', 'Vert', 'lvert', 'rvert', 'lVert', 'rVert',
+  'ldots', 'cdots', 'vdots', 'ddots', 'dots',
+  // Large operators and functions
+  'sum', 'prod', 'coprod', 'int', 'iint', 'iiint', 'oint', 'bigcup', 'bigcap', 'bigsqcup', 'bigvee', 'bigwedge',
+  'bigoplus', 'bigotimes', 'bigodot', 'biguplus', 'lim', 'limsup', 'liminf', 'max', 'min', 'sup', 'inf', 'arg',
+  'det', 'dim', 'exp', 'gcd', 'hom', 'ker', 'deg', 'Pr', 'log', 'lg', 'ln', 'sin', 'cos', 'tan', 'cot', 'sec',
+  'csc', 'arcsin', 'arccos', 'arctan', 'sinh', 'cosh', 'tanh', 'coth',
+  // Spacing
+  'quad', 'qquad',
+];
+
+// Commands ranked first among equally good matches (the most common ones).
+window.VT_COMMON_COMMANDS = [
+  'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'varepsilon', 'theta', 'lambda', 'mu', 'pi', 'sigma', 'phi',
+  'varphi', 'omega', 'frac', 'sqrt', 'sum', 'int', 'infty', 'partial', 'prime', 'mathcal', 'mathbb', 'mathrm',
+  'cdot', 'times', 'pm', 'le', 'ge', 'ne', 'approx', 'to', 'hat', 'bar', 'vec', 'dot', 'nabla', 'lim', 'left',
+  'right', 'otimes', 'oplus', 'in', 'subset', 'forall', 'exists', 'rightarrow', 'Rightarrow', 'ldots', 'cdots',
+];
