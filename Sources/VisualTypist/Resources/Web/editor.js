@@ -177,6 +177,14 @@
     const model = fieldModel();
     const anchor = model && caretAtom(model);
     if (/^[_^]/.test(latex) && (model?.selectionIsPlaceholder || anchor?.type === 'first')) latex = `{}${latex}`;
+    // A script after a symbol that already has scripts takes the whole scripted symbol as its base,
+    // as classic editors do: ⌘Q 1 → ⌘L 2 gives {a^{1}}_{2}, so tensor indices stay staggered.
+    else if (/^[_^']/.test(latex) && model?.selectionIsCollapsed && isScripts(anchor)) { // ' is a superscript too.
+      const range = scriptedRange(model, anchor);
+      // #0 would take the selection again; the new script starts empty.
+      latex = `{${mathfield.getValue(range[0], range[1], 'latex')}}${latex.replace('#0', '#?')}`;
+      mathfield.selection = { ranges: [range] };
+    }
     mathfield.insert(latex, {
       format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true, feedback: false,
     });
@@ -419,13 +427,23 @@
     if (!mathfield) return false;
     for (const field of lines) field.executeCommand('selectAll');
     mathfield.focus();
-    allSelected = lines.length > 1 || mathfield.lastOffset > 0;
+    setAllSelected(lines.length > 1 || mathfield.lastOffset > 0);
     return true;
+  }
+
+  /** Marks every line as selected (⌘A), or ends that: the other lines' selections collapse. */
+  function setAllSelected(value) {
+    if (!value && !allSelected) return;
+    allSelected = value;
+    for (const field of lines) {
+      field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', value);
+      if (!value && field !== mathfield) field.position = field.lastOffset;
+    }
   }
 
   /** Replaces the whole document with one empty line (after ⌘A, before typing). */
   function clearDocument() {
-    allSelected = false;
+    setAllSelected(false);
     const first = lines[0];
     first.focus();
     mathfield = first;
@@ -519,6 +537,8 @@
     .vt-slot { color: transparent !important; background: linear-gradient(var(--vt-slot), var(--vt-slot)) center / 58% 74% no-repeat !important; }
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
     .vt-slot-selected .ML__selection { display: none !important; }
+    /* After ⌘A every line shows its selection, also the lines without focus. */
+    .vt-all-selected .ML__selection { background: var(--selection-background-color) !important; }
     /* A caret inside the slot that has it, at the block's left edge. */
     .vt-slot-active { position: relative; }
     .ML__focused .vt-slot-active::after {
@@ -616,7 +636,7 @@
   /** Shows `latex` (lines separated by newlines) in the editor. */
   async function setDocumentLatex(latex) {
     if (composing?.mode === 'math') closeComposition({ keepPreedit: true }); // The content is replaced anyway.
-    allSelected = false;
+    setAllSelected(false);
     const parts = splitLines(cleanLatex(latex));
     loading = true;
     try {
@@ -795,8 +815,35 @@
   }
 
   const isStructure = atom => !!atom && atom.type !== 'first' && (atom.branches?.length ?? 0) > 0;
+  /** Scripts that MathLive keeps as their own atom after the base (x then ^{2}). */
+  const isScripts = atom => atom?.type === 'subsup';
+
+  /** The range of the base before `scripts` together with all its scripts. */
+  function scriptedRange(model, scripts) {
+    let first = scripts;
+    while (isScripts(first.leftSibling)) first = first.leftSibling;
+    const base = first.leftSibling;
+    const start = base && base.type !== 'first' ? atomRange(model, base)[0] : atomRange(model, first)[0];
+    return [start, model.offsetOf(scripts)];
+  }
+
+  /** Deletes the structure `atom` (scripts only: the base stays), leaving the caret where it was. */
+  function deleteStructure(model, atom) {
+    const base = isScripts(atom) ? atom.leftSibling : null;
+    mathfield.selection = { ranges: [atomRange(model, atom)] };
+    mathfield.executeCommand('deleteBackward');
+    // A base grouped for these scripts ({a^{1}}_{2}) needs its braces no more.
+    const after = fieldModel();
+    const group = base?.type === 'group' && after.at(after.position);
+    if (group === base && !isScripts(group.rightSibling) && branchAtoms(group, 'body').some(child => child.type !== 'first')) {
+      const range = atomRange(after, group);
+      const inner = mathfield.getValue(range[0], range[1], 'latex').replace(/^\{([^]*)\}$/, '$1');
+      mathfield.selection = { ranges: [range] };
+      mathfield.insert(inner, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    }
+    syncFromField();
+  }
   const hasOwnSlots = atom => (atom.branches ?? []).some(branch => !SCRIPT_BRANCHES.includes(branch));
-  const allSlotsEmpty = atom => (atom.branches ?? []).every(branch => isSlotEmpty(atom, branch));
 
   /** An operator's empty operand (the □ after ∑ or ∫) belongs to it. */
   function operandOf(atom) {
@@ -823,9 +870,9 @@
   }
 
   /**
-   * Backspace as in classic equation editors: in an empty slot it selects the slot's structure
-   * (a second Backspace deletes it); right after a structure it deletes the structure if all its
-   * slots are empty and selects it otherwise. An empty script is selected and then removed on its own.
+   * Backspace as in classic equation editors: in an empty slot, or at the start of a filled one, it
+   * selects the slot's structure (a second Backspace deletes it); right after a structure it deletes
+   * the whole structure at once, and after scripts only the scripts, keeping their base.
    */
   function backspace() {
     const model = fieldModel();
@@ -860,6 +907,13 @@
       }
     }
 
+    // At the start of a filled slot: select the structure (a second Backspace deletes it).
+    if (model.selectionIsCollapsed && atom?.type === 'first' && atom.parent && !atom.parent.isRoot &&
+        !isSlotEmpty(atom.parent, atom.parentBranch)) {
+      mathfield.selection = { ranges: [atomRange(model, atom.parent)] };
+      return true;
+    }
+
     // In an empty slot.
     if (atom && ['first', 'placeholder'].includes(atom.type) && atom.parent && !atom.parent.isRoot &&
         isSlotEmpty(atom.parent, atom.parentBranch)) {
@@ -879,24 +933,14 @@
     let before = model.at(model.position);
     if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
     if (!isStructure(before)) return false;
-    if (before.type === 'leftright') {
-      // A bracket is deleted as one unit, contents and all.
-      mathfield.selection = { ranges: [atomRange(model, before)] };
-      mathfield.executeCommand('deleteBackward');
-      syncFromField();
-      return true;
-    }
-    if (!hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
-      // A symbol with scripts (x²): step into the last script.
+    if (!isScripts(before) && !hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
+      // A symbol carrying its scripts itself: step into the last script.
       const last = slotOrder(before).at(-1);
       moveCaretTo(model.offsetOf(branchAtoms(before, last).at(-1)));
       return true;
     }
-    mathfield.selection = { ranges: [atomRange(model, before)] };
-    if (allSlotsEmpty(before)) {
-      mathfield.executeCommand('deleteBackward');
-      syncFromField();
-    }
+    // A structure is deleted as one unit, contents and all; scripts go and their base stays.
+    deleteStructure(model, before);
     return true;
   }
 
@@ -1766,11 +1810,20 @@
         syncFromField();
         return;
       }
-      allSelected = false;
+      setAllSelected(false);
     }
     if (composing && handleCompositionKey(event)) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      return;
+    }
+    // Typed ^ and _ make scripts the way the script shortcuts do.
+    if ((event.key === '^' || event.key === '_') && !event.metaKey && !event.ctrlKey && !event.altKey &&
+        lines.some(field => event.composedPath().includes(field)) &&
+        (fieldModel()?.selectionIsCollapsed || fieldModel()?.selectionIsPlaceholder)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      insertLatex(`${event.key}{#0}`);
       return;
     }
     if (event.key === '\\' && !event.metaKey && !event.ctrlKey && !event.altKey &&
@@ -1986,7 +2039,7 @@
     });
   }
   document.addEventListener('mousedown', event => {
-    allSelected = false;
+    setAllSelected(false);
     if (composing && !$('candidates').contains(event.target)) closeComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
     if (recording && !$('recorder').contains(event.target)) stopRecording();

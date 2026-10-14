@@ -10,10 +10,13 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   a new line, ⌫ at the start of a line joins it to the one above); empty slots show as light-blue
   blocks (in the LaTeX they are plain `{}`); ←/→ and ⇥ / ⇧⇥ walk the slots in order (∑ and ∫:
   lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
-  upper ↔ lower limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a
-  second ⌫ deletes it — an emptied script is selected, then removed while its base stays.
-  Brackets (`\left…\middle…\right`) are one unit: ⌫ right after one deletes it with its
-  contents, ⌫ in one of its empty slots selects the whole bracket.
+  upper ↔ lower limit, matrix rows) and lines. ⌫ right after a structure (fraction, root,
+  bracket…) deletes it whole, contents and all; after scripts it deletes just the scripts and
+  keeps their base. ⌫ in an empty slot, or at the start of a filled one, selects the structure,
+  and a second ⌫ deletes it.
+- **Staggered indices:** a script added after a symbol that already has one scripts the whole
+  thing — `a`, `⌘Q` `1`, `→`, `⌘L` `2` gives `{a^{1}}_{2}`, so tensor indices sit apart
+  (`T^{ab}{}_{c}`). Typed `^` and `_` work the same way.
 - **Templates and accents behave like a classic editor's buttons:** an accent (`⌘H` hat, `⌘D` dot,
   `⌥T` vector…) applies to the symbol before the caret or to the selection; a template takes the
   selection into its first slot and puts the caret in the next one (a selected expression
