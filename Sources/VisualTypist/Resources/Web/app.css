@@ -19,9 +19,9 @@
   --vt-slot: #c6e4fb;
   --vt-slot-active: #9ccff5;
   --line-rule: #d6d8ea;
-  --tile-w: 44px;
-  --tile-h: 38px;
-  --bottom-height: 214px;
+  --tile-w: 56px;
+  --tile-h: 48px;
+  --bottom-height: 280px;
   font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 
@@ -62,6 +62,8 @@ button, select, input, textarea { font: inherit; color: inherit; }
 #field-host { display: flex; flex-direction: column; min-height: 100%; padding: 10px 22px 40px; }
 /* One field per line, each on its own dotted rule. */
 math-field {
+  /* The page disables text selection; MathLive needs it to place the caret where you click. */
+  -webkit-user-select: text; user-select: text;
   display: block; width: 100%; min-height: 1.6em; padding: 6px 2px 8px;
   border: 0; border-bottom: 1px dotted var(--line-rule); outline: none; background: transparent;
   color: var(--text); font-size: 40px;
@@ -120,7 +122,7 @@ math-field::part(container) { padding: 0; }
 }
 #tabs::-webkit-scrollbar { display: none; }
 #tabs button {
-  flex-shrink: 0; height: 28px; min-width: 62px; padding: 0 12px; border: 1px solid transparent; border-bottom: 0;
+  flex-shrink: 0; height: 32px; min-width: 70px; padding: 0 14px; border: 1px solid transparent; border-bottom: 0;
   border-radius: 7px 7px 0 0; background: transparent; color: var(--secondary);
   display: inline-flex; align-items: center; justify-content: center;
 }
@@ -131,7 +133,7 @@ math-field::part(container) { padding: 0; }
 
 /* Every category side by side, four rows each, in one sideways-scrolling strip. */
 #strip {
-  flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px 10px;
+  flex: 1; display: flex; align-items: flex-start; gap: 16px; padding: 12px 14px 14px;
   overflow-x: auto; overflow-y: hidden; background: var(--page); scroll-padding: 0 10px;
 }
 .group {
@@ -144,17 +146,18 @@ math-field::part(container) { padding: 0; }
 .group[data-tint="violet"] { --tint: var(--tint-violet); }
 .group[data-tint="amber"] { --tint: var(--tint-amber); }
 .tile {
-  position: relative; border: 0; padding: 0; background: var(--tint); color: var(--text); font-size: 15px;
+  position: relative; border: 0; padding: 6px 7px 13px; background: var(--tint); color: var(--text); font-size: 16px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
 .group .tile:first-child { border-top-left-radius: 6px; }
 .tile:hover { filter: brightness(.95); }
 .tile:active { filter: brightness(.88); }
 @media (prefers-color-scheme: dark) { .tile:hover { filter: brightness(1.2); } .tile:active { filter: brightness(1.35); } }
-.tile svg { max-width: calc(var(--tile-w) - 8px); max-height: calc(var(--tile-h) - 6px); width: auto; height: auto; }
+.tile svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+/* The shortcut sits in its own strip along the bottom edge, below the glyph's padding box. */
 .tile .key {
-  position: absolute; right: 2px; bottom: 0; font: 600 8px/1.2 -apple-system, sans-serif; color: var(--secondary);
-  letter-spacing: -.02em; pointer-events: none;
+  position: absolute; left: 2px; right: 3px; bottom: 1px; text-align: right;
+  font: 600 9px/11px -apple-system, sans-serif; color: var(--secondary); pointer-events: none;
 }
 
 #code-pane { display: flex; flex-direction: column; height: 100%; }

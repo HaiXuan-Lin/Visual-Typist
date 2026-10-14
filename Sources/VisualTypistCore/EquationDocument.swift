@@ -136,13 +136,18 @@ public struct EquationDocument: Codable, Equatable, Sendable {
             depth += code.filter { $0 == "{" }.count - code.filter { $0 == "}" }.count
             depth += code.components(separatedBy: #"\begin{"#).count - code.components(separatedBy: #"\end{"#).count
             if depth <= 0 {
-                result.append(current ?? "")
+                result.append(Self.withoutLineBreak(current ?? ""))
                 current = nil
                 depth = 0
             }
         }
-        if let current { result.append(current) }
+        if let current { result.append(Self.withoutLineBreak(current)) }
         return result.isEmpty ? [""] : result
+    }
+
+    /// Lines are separated by `\\` at the end of the line; the separator is not part of the line.
+    private static func withoutLineBreak(_ line: String) -> String {
+        line.replacingOccurrences(of: #"\s*\\\\\s*$"#, with: "", options: .regularExpression)
     }
 
     /// Removes surrounding whitespace, keeping a trailing escaped space (`\ `).

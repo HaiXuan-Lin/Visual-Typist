@@ -76,6 +76,7 @@
         ['naturals', '\\mathbb{N}'], ['rationals', '\\mathbb{Q}'],
         ['mathbb', '\\mathbb{#0}', { preview: '\\mathbb{A}' }],
         ['mathcal', '\\mathcal{#0}', { preview: '\\mathcal{A}' }],
+        ['mathscr', '\\mathscr{#0}', { preview: '\\mathscr{A}' }],
         ['mathfrak', '\\mathfrak{#0}', { preview: '\\mathfrak{A}' }],
         ['mathrm', '\\mathrm{#0}', { preview: '\\mathrm{Ab}' }],
         ['mathbf', '\\mathbf{#0}', { preview: '\\mathbf{Ab}' }],

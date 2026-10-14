@@ -31,6 +31,11 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     var onReady: (() -> Void)?
     var onChange: ((EquationDocument) -> Void)?
     var onAction: ((String, [String: Any]) -> Void)?
+    /// ⌘C in the equation (not the LaTeX pane): copy the document as an image.
+    var onCopyEquation: (() -> Void)? {
+        get { webView.onCopyEquation }
+        set { webView.onCopyEquation = newValue }
+    }
     var onError: ((String) -> Void)?
 
     private var pendingDocument: EquationDocument?
@@ -175,6 +180,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 /// editor win over menu items with the same keys while the equation has focus.
 final class EditorWebView: WKWebView {
     var interceptedCombos: Set<String> = []
+    var onCopyEquation: (() -> Void)?
 
     /// While the visual editor has focus, an input method (Pinyin, Kana…) is swapped for a keyboard
     /// layout: composed text would otherwise arrive as text-mode characters instead of math. The
@@ -253,6 +259,10 @@ final class EditorWebView: WKWebView {
         if flags.contains(.shift) { modifiers.insert(.shift) }
         if flags.contains(.command) { modifiers.insert(.command) }
         let combo = KeyCombo(modifiers: modifiers, key: key).description
+        if combo == "cmd+c", restrictsToRomanInput, let onCopyEquation {
+            onCopyEquation()
+            return true
+        }
         guard interceptedCombos.contains(combo) else { return false }
         onShortcut?(combo)
         return true

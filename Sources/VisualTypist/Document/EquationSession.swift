@@ -31,6 +31,7 @@ final class EquationSession {
         }
         bridge.onAction = { [weak self] name, body in self?.perform(name, body) }
         bridge.onError = { [weak self] message in self?.errorMessage = message }
+        bridge.onCopyEquation = { [weak self] in self?.copyImage() }
     }
 
     var isDirty: Bool { document != savedDocument }
@@ -182,11 +183,15 @@ final class EquationSession {
         Task {
             do {
                 let exporter = Exporter(bridge: bridge)
-                let png = try await exporter.data(.png, document: snapshot, scale: pngScale)
+                let svg = try await exporter.data(.svg, document: snapshot, scale: pngScale)
                 let pdf = try await exporter.data(.pdf, document: snapshot, scale: pngScale)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setData(pdf, forType: .pdf)
-                NSPasteboard.general.setData(png, forType: .png)
+                let png = try await exporter.data(.png, document: snapshot, scale: pngScale)
+                // SVG first; PDF and PNG for apps that don't accept SVG.
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setData(svg, forType: NSPasteboard.PasteboardType("public.svg-image"))
+                pasteboard.setData(pdf, forType: .pdf)
+                pasteboard.setData(png, forType: .png)
                 bridge.toast("Image copied")
             } catch {
                 errorMessage = error.localizedDescription

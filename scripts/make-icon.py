@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the app icon: a golden, three-dimensional script V on a transparent background.
+"""Generates the app icon: a golden, three-dimensional script V on a white rounded square.
 
 Writes Resources/AppIcon.svg (the vector master), Resources/AppIcon.png (1024 px) and
 Resources/AppIcon.icns. Rendering needs `rsvg-convert` (Homebrew: librsvg) and macOS `iconutil`.
@@ -45,11 +45,12 @@ GLYPH = (
 GLYPH_BOX = (0.548, -7.143, 8.538, 0.169)  # left, top, right, bottom in font units
 
 SIZE = 1024
-SCALE = 98                       # px per font unit
-CENTER = (506, 468)              # where the glyph's center lands on the canvas
+SCALE = 76                       # px per font unit
+CENTER = (508, 494)              # where the glyph's center lands on the canvas
+TILE = (100, 100, 824, 185)      # white rounded square: x, y, size, corner radius (macOS icon grid)
 OUTER_STROKE = 0.24              # font units; thickens RSFS's hairlines into a solid letter
 INNER_STROKE = 0.11              # the gold face, inset from the outer edge to leave a bevel
-DEPTH = (10, 34)                 # extrusion offset in px (right, down)
+DEPTH = (8, 26)                  # extrusion offset in px (right, down)
 LAYERS = 26
 
 
@@ -107,11 +108,22 @@ def svg() -> str:
       <g transform="{glyph_transform()}"><use href="#v" stroke="#000" stroke-width="{INNER_STROKE}" stroke-linejoin="round" stroke-linecap="round"/></g>
     </clipPath>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="16"/>
+      <feGaussianBlur stdDeviation="14"/>
     </filter>
+    <filter id="tile-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f2f3f6"/>
+    </linearGradient>
   </defs>
+  <!-- white rounded square -->
+  <rect x="{TILE[0]}" y="{TILE[1] + 12}" width="{TILE[2]}" height="{TILE[2]}" rx="{TILE[3]}" fill="#000" opacity="0.28" filter="url(#tile-shadow)"/>
+  <rect x="{TILE[0]}" y="{TILE[1]}" width="{TILE[2]}" height="{TILE[2]}" rx="{TILE[3]}" fill="url(#tile)"/>
+  <rect x="{TILE[0] + 0.75}" y="{TILE[1] + 0.75}" width="{TILE[2] - 1.5}" height="{TILE[2] - 1.5}" rx="{TILE[3] - 0.75}" fill="none" stroke="#000" stroke-opacity="0.07" stroke-width="1.5"/>
   <!-- soft contact shadow -->
-  {shape('#2a1a02', OUTER_STROKE, DEPTH[0] + 14, DEPTH[1] + 26, ' opacity="0.42" filter="url(#shadow)"')}
+  {shape('#5a3d08', OUTER_STROKE, DEPTH[0] + 10, DEPTH[1] + 18, ' opacity="0.30" filter="url(#shadow)"')}
   <!-- extrusion -->
   {''.join(extrusion)}
   <!-- bevel: dark rim with a light upper-left edge -->

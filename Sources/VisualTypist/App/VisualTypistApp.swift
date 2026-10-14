@@ -155,7 +155,8 @@ struct EditorCommands: Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
             Button("Copy LaTeX") { session?.copyLaTeX() }.keyboardShortcut("t")
-            Button("Copy as Image") { session?.copyImage() }.keyboardShortcut("c", modifiers: [.command, .shift])
+            // ⌘C in the equation copies it as an image (SVG, PDF and PNG); ⌘T copies the LaTeX.
+            Button("Copy as Image") { session?.copyImage() }
             Button("Copy MathML") { session?.copyMathML() }
         }
 

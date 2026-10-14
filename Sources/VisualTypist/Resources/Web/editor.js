@@ -57,8 +57,8 @@
     forwarddelete: '⌦', escape: '⎋', home: '↖', end: '↘',
   };
   // Menu and system commands that a recorded shortcut may not take over.
-  const RESERVED = new Set(['cmd+c', 'cmd+v', 'cmd+x', 'cmd+z', 'cmd+shift+z', 'cmd+a', 'cmd+s', 'cmd+n',
-    'cmd+w', 'cmd+m', 'cmd+,', 'cmd+tab', 'cmd+space', 'cmd+shift+c', 'cmd+alt+c', 'cmd+t']);
+  const RESERVED = new Set(['cmd+c', 'cmd+v', 'cmd+x', 'cmd+z', 'shift+cmd+z', 'cmd+a', 'cmd+s', 'cmd+n', 'cmd+w',
+    'cmd+m', 'cmd+,', 'cmd+tab', 'cmd+space', 'cmd+t', 'shift+cmd+o', 'alt+shift+cmd+s']);
 
   function keyName(event) {
     if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
@@ -197,8 +197,83 @@
     return true;
   }
 
-  function wrapSelection(command) {
-    return insertLatex(`\\${command}{#0}`);
+  const FONT_COMMANDS = new Set(['mathrm', 'mathit', 'mathbf', 'boldsymbol', 'bm', 'mathsf', 'mathtt', 'mathcal',
+    'mathscr', 'mathfrak', 'mathbfit', 'mathnormal']);
+
+  /** Removes font commands (\mathbf{…}, \mathcal{…}…) from LaTeX, keeping their contents. */
+  function stripFonts(latex) {
+    let result = '';
+    for (let index = 0; index < latex.length;) {
+      const match = /^\\([a-zA-Z]+)\s*\{/.exec(latex.slice(index));
+      if (match && FONT_COMMANDS.has(match[1])) {
+        let depth = 1;
+        let end = index + match[0].length;
+        for (; end < latex.length && depth > 0; end += 1) {
+          if (latex[end] === '\\') { end += 1; continue; }
+          if (latex[end] === '{') depth += 1;
+          if (latex[end] === '}') depth -= 1;
+        }
+        result += stripFonts(latex.slice(index + match[0].length, end - 1));
+        index = end;
+      } else {
+        result += latex[index];
+        index += 1;
+      }
+    }
+    return result;
+  }
+
+  // MathLive's style for what is typed next, per font command (null: no font).
+  const FONT_STYLES = {
+    mathrm: { variant: 'normal', variantStyle: 'up' }, null: { variant: 'normal', variantStyle: '' },
+    mathit: { variant: 'normal', variantStyle: 'italic' }, mathbf: { variant: 'normal', variantStyle: 'bold' },
+    boldsymbol: { variant: 'normal', variantStyle: 'bolditalic' }, mathsf: { variant: 'sans-serif', variantStyle: '' },
+    mathtt: { variant: 'monospace', variantStyle: '' }, mathcal: { variant: 'calligraphic', variantStyle: '' },
+    mathscr: { variant: 'script', variantStyle: '' }, mathfrak: { variant: 'fraktur', variantStyle: '' },
+  };
+
+  /** Sets the font of the selection (or of what is typed next): `command` is e.g. 'mathbf', or null for none. */
+  function setFont(command) {
+    const wrap = text => {
+      const inner = stripFonts(text);
+      return command ? `\\${command}{${inner}}` : inner;
+    };
+    if (codeFocused()) {
+      const { selectionStart: start, selectionEnd: end, value } = codeArea;
+      if (start === end) return command ? insertIntoCode(`\\${command}{#0}`) : true;
+      codeArea.setRangeText(wrap(value.slice(start, end)), start, end, 'select');
+      codeArea.dispatchEvent(new Event('input'));
+      return true;
+    }
+    const model = fieldModel();
+    if (!mathfield || !model) return false;
+    mathfield.focus();
+    if (model.selectionIsCollapsed || model.selectionIsPlaceholder) {
+      mathfield.applyStyle(FONT_STYLES[command], { operation: 'set' });
+      return true;
+    }
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    const selected = mathfield.getValue(start, end, 'latex');
+    const topLevel = model.at(start + 1)?.parent === model.root && model.at(end)?.parent === model.root;
+    if (!topLevel) {
+      // Inside a structure: MathLive's insert (it writes bold Latin letters as \mathbf).
+      mathfield.insert(wrap(selected), { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'item', feedback: false });
+      syncFromField();
+      return true;
+    }
+    // Rebuilding the line keeps the exact command (MathLive's insert would turn \boldsymbol{x} into \mathbf{x}).
+    const field = mathfield;
+    const before = field.getValue(0, start, 'latex');
+    const after = field.getValue(end, field.lastOffset, 'latex');
+    const middle = wrap(selected);
+    const glue = (left, right) => (/\\[a-zA-Z]+$/.test(left) && /^[a-zA-Z]/.test(right) ? ' ' : '');
+    const remaining = field.lastOffset - end;
+    setLineValue(lines.indexOf(field), before + glue(before, middle) + middle + glue(middle, after) + after).then(updated => {
+      updated.focus();
+      updated.selection = { ranges: [[start, updated.lastOffset - remaining]] };
+      syncFromField();
+    });
+    return true;
   }
 
   function matrixCommand(name) {
@@ -217,12 +292,16 @@
       return true;
     },
     greekNext: () => { setGreekPending(true); return true; },
-    styleRegular: () => wrapSelection('mathrm'),
-    styleItalic: () => wrapSelection('mathit'),
-    styleBold: () => wrapSelection('mathbf'),
-    styleBoldItalic: () => wrapSelection('boldsymbol'),
-    styleSans: () => wrapSelection('mathsf'),
-    styleMono: () => wrapSelection('mathtt'),
+    fontRoman: () => setFont('mathrm'),
+    fontNormal: () => setFont(null),
+    fontItalic: () => setFont('mathit'),
+    fontBold: () => setFont('mathbf'),
+    fontBoldSymbol: () => setFont('boldsymbol'),
+    fontSans: () => setFont('mathsf'),
+    fontMono: () => setFont('mathtt'),
+    fontCalligraphic: () => setFont('mathcal'),
+    fontScript: () => setFont('mathscr'),
+    fontFraktur: () => setFont('mathfrak'),
     addRowBefore: () => matrixCommand('addRowBefore'),
     addRowAfter: () => matrixCommand('addRowAfter'),
     addColumnBefore: () => matrixCommand('addColumnBefore'),
@@ -241,8 +320,11 @@
 
   const COMMAND_TITLES = {
     toggleMode: 'Switch between symbols and LaTeX code', applyCode: 'Apply LaTeX code to the equation',
-    greekNext: 'Type the next letter in Greek', styleRegular: 'Upright', styleItalic: 'Italic',
-    styleBold: 'Bold', styleBoldItalic: 'Bold italic', styleSans: 'Sans serif', styleMono: 'Typewriter',
+    greekNext: 'Type the next letter in Greek', fontRoman: 'Font: upright (\\mathrm)',
+    fontNormal: 'Font: normal (remove font)', fontItalic: 'Font: italic (\\mathit)', fontBold: 'Font: bold (\\mathbf)',
+    fontBoldSymbol: 'Font: bold symbol (\\boldsymbol)', fontSans: 'Font: sans serif (\\mathsf)',
+    fontMono: 'Font: typewriter (\\mathtt)', fontCalligraphic: 'Font: calligraphic (\\mathcal)',
+    fontScript: 'Font: script (\\mathscr)', fontFraktur: 'Font: fraktur (\\mathfrak)',
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
     addColumnBefore: 'Matrix: insert column before', addColumnAfter: 'Matrix: insert column after',
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
@@ -271,6 +353,8 @@
    * block written over several lines, say) belongs to that line rather than starting a new one.
    */
   function splitLines(latex) {
+    // A line break written as \\ at the end of a line is the separator, not part of the line.
+    const finish = line => line.replace(/\s*\\\\\s*$/, '');
     const result = [];
     let current = null;
     let depth = 0;
@@ -280,12 +364,12 @@
       depth += (code.match(/\{/g) || []).length - (code.match(/\}/g) || []).length;
       depth += (code.match(/\\begin\{/g) || []).length - (code.match(/\\end\{/g) || []).length;
       if (depth <= 0) {
-        result.push(current);
+        result.push(finish(current));
         current = null;
         depth = 0;
       }
     }
-    if (current !== null) result.push(current);
+    if (current !== null) result.push(finish(current));
     return result.length ? result : [''];
   }
 
@@ -319,6 +403,9 @@
     } else {
       field.setAttribute('aria-label', 'Equation line');
       field.addEventListener('input', syncFromField);
+      field.addEventListener('selection-change', () => {
+        if (field === mathfield && !restoringPlaceholders && restorePlaceholders()) syncFromField();
+      });
       field.addEventListener('focusin', () => { mathfield = field; });
     }
     const mounted = new Promise(resolve => field.addEventListener('mount', resolve, { once: true }));
@@ -384,8 +471,9 @@
     if (!lines.includes(mathfield)) mathfield = lines[0];
   }
 
+  /** The document as LaTeX: one line per equation line, separated by \\. */
   function documentLatex() {
-    return lines.map(field => portableLatex(field.getValue('latex'))).join('\n');
+    return lines.map(field => portableLatex(field.getValue('latex'))).join(' \\\\\n');
   }
 
   /** Rewrites MathLive output that standard LaTeX (and MathJax) rejects, e.g. `\middle{|}` or `\bm`. */
@@ -1086,9 +1174,7 @@
       });
       const source = output.querySelector('svg');
       if (!source || output.querySelector('[data-mml-node="merror"]')) throw new Error('The equation could not be typeset.');
-      if (source.querySelector('text, foreignObject, image')) {
-        throw new Error('The equation contains a character without a vector outline.');
-      }
+      if (source.querySelector('foreignObject, image')) throw new Error('The equation contains unsupported content.');
       const svg = source.cloneNode(true);
       const bounds = svg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
       if (!bounds || bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[2] <= 0 || bounds[3] <= 0) {
@@ -1268,7 +1354,7 @@
   // Resizable bottom pane.
   const root = document.documentElement;
   const setBottomHeight = height => {
-    const clamped = Math.max(120, Math.min(innerHeight - 160, height));
+    const clamped = Math.max(250, Math.min(innerHeight - 140, height));
     root.style.setProperty('--bottom-height', `${clamped}px`);
     return clamped;
   };

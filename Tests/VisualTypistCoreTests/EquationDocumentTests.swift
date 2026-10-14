@@ -72,6 +72,7 @@ struct EquationDocumentTests {
         #expect(document.lines == ["a+b", "\\begin{aligned}x&=1\\\\\ny&=2\\end{aligned}", "\\frac{1}{\n2}", ""])
         #expect(EquationDocument(latex: "").lines == [""])
         #expect(EquationDocument(latex: #"\{x\}"#).lines == [#"\{x\}"#])
+        #expect(EquationDocument(latex: "x=1 \\\\\ny=2").lines == ["x=1", "y=2"])
     }
 
     @Test func multiLineDocumentsExportAsALeftAlignedArray() {

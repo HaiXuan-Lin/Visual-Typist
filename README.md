@@ -40,7 +40,9 @@ Keys are matched by position, so `⌥K` works even though macOS would normally t
 
 While the equation has focus, its shortcuts win over menu items with the same keys — `⌘Q` makes
 a superscript and `⌘H` a wide hat, so quit or hide from the app menu (or reassign them). Menu
-commands that would collide moved: Open is `⇧⌘O`, Save As `⌥⇧⌘S`, Copy LaTeX `⌘T`.
+commands that would collide moved: Open is `⇧⌘O` and Save As `⌥⇧⌘S`. In the equation, `⌘C`
+copies it as an image (SVG, with PDF and PNG for apps that don't take SVG) and `⌘T` copies the
+LaTeX.
 
 | Insert | Shortcut | | Insert | Shortcut |
 | --- | --- | --- | --- | --- |
@@ -64,10 +66,10 @@ commands that would collide moved: Open is `⇧⌘O`, Save As `⌥⇧⌘S`, Copy
 | Switch between symbols and LaTeX code | `⌃⇥` |
 | Apply the LaTeX code and return to the equation | `⇧↩` |
 | Type the next letter in Greek (⇧ for capitals) | `⌘G`, then a letter |
-| Upright / italic / bold / bold italic / sans / mono | `⌘1` … `⌘6` (bold `⌘B`, italic `⌘I`) |
+| Font of the selection (or of what you type next): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold, `⌘I` italic) |
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
 | Matrix: delete row / column | `⌥⌘↑` / `⌥⌘←` |
-| Copy LaTeX / copy as image | `⌘T` / `⇧⌘C` |
+| Copy as image / copy LaTeX | `⌘C` / `⌘T` |
 
 While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
 keyboard layout so letters arrive as math; your input method returns in the LaTeX pane, where
@@ -106,8 +108,8 @@ Tests/VisualTypistCoreTests/   unit tests
 scripts/                       test runner, vendor update, icon generator
 ```
 
-Documents are saved as `.vteq` (JSON with the LaTeX source, one line per equation line, and
-display settings); multi-line documents export as a left-aligned array. The app also
+Documents are saved as `.vteq` (JSON with the LaTeX source and display settings). In the LaTeX
+the equation lines are separated by `\\`; multi-line documents export as a left-aligned array. The app also
 opens `.tex`, `.latex` and `.txt` files containing a single equation.
 
 ## Development
