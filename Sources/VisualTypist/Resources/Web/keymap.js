@@ -23,6 +23,7 @@ window.VT_DEFAULT_KEYMAP = {
   'cmd+f': { insert: 'frac' },
   'cmd+q': { insert: 'superscript' },
   'cmd+e': { insert: 'subscript' },
+  'cmd+l': { insert: 'subscript' },
   'cmd+j': { insert: 'subsup' },
   'cmd+d': { insert: 'dot' },
   'cmd+shift+d': { insert: 'ddot' },

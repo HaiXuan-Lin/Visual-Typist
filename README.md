@@ -8,9 +8,10 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   **LaTeX code** (`⌃⇥`). Both stay in sync as you type.
 - **Structured editing like a classic equation editor:** a document of equation lines (↩ starts
   a new line, ⌫ at the start of a line joins it to the one above); empty slots show as light-blue
-  blocks; ⇥ / ⇧⇥ walk the slots; ↑/↓ move between slots (numerator ↔ denominator, upper ↔ lower
-  limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a second ⌫
-  deletes it.
+  blocks (in the LaTeX they are plain `{}`); ←/→ and ⇥ / ⇧⇥ walk the slots in order (∑ and ∫:
+  lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
+  upper ↔ lower limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a
+  second ⌫ deletes it — an emptied script is selected, then removed while its base stays.
 - **300+ symbols and templates** in 12 tabs: Greek, fractions & scripts, operators, relations,
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, matrices and arrows.
@@ -49,7 +50,7 @@ LaTeX.
 | γ | `⌥G` | | Fraction | `⌘F` |
 | ∞ | `⌥I` | | Square root | `⌘R` |
 | π | `⌘P` | | Superscript | `⌘Q` |
-| ω | `⌘O` | | Subscript | `⌘E` |
+| ω | `⌘O` | | Subscript | `⌘E` or `⌘L` |
 | ψ | `⌥⇧P` | | Sub- and superscript | `⌘J` |
 | ∂ | `⇧⌘P` | | Integral with limits | `⇧⌘I` |
 | (▢\|▢) | `⌥9` | | Sum with limits | `⇧⌘S` |

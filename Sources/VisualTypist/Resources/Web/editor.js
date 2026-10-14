@@ -18,6 +18,7 @@
   const paletteById = new Map(VT_PALETTE.flatMap(category => category.items.map(item => [item.id, item])));
 
   let lines = [];        // One editor field per line of the document.
+  let loading = false;   // True while the editor is filled from LaTeX; edits are not reported then.
   let mathfield = null;  // The line with the caret.
   let scratchField = null;
   let overrides = {};
@@ -171,11 +172,26 @@
     if (codeFocused()) return insertIntoCode(latex);
     if (!mathfield) return false;
     mathfield.focus();
+    // A script with nothing before it (start of a slot, or an empty slot) needs an empty base: {}_{…}.
+    const model = fieldModel();
+    const anchor = model && caretAtom(model);
+    if (/^[_^]/.test(latex) && (model?.selectionIsPlaceholder || anchor?.type === 'first')) latex = `{}${latex}`;
     mathfield.insert(latex, {
       format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true, feedback: false,
     });
+    startInLowerLimit();
     syncFromField();
     return true;
+  }
+
+  /** A newly inserted ∑ or ∫ with limits starts in its lower limit, where the index goes. */
+  function startInLowerLimit() {
+    const model = fieldModel();
+    const atom = model && caretAtom(model);
+    const owner = atom?.parent;
+    if (!model?.selectionIsPlaceholder || atom.parentBranch !== 'superscript' || !LARGE_OPERATORS.has(owner?.type)) return;
+    const lower = branchAtoms(owner, 'subscript').find(child => child.type === 'placeholder');
+    if (lower) selectPlaceholderAt(model.offsetOf(lower));
   }
 
   function insertItem(item) {
@@ -465,15 +481,28 @@
   /** Shows `latex` (lines separated by newlines) in the editor. */
   async function setDocumentLatex(latex) {
     const parts = splitLines(cleanLatex(latex));
-    while (lines.length < parts.length) await insertLine(lines.length);
-    while (lines.length > parts.length) removeLine(lines.at(-1), lines.at(-2));
-    for (let index = 0; index < parts.length; index += 1) await setLineValue(index, parts[index]);
+    loading = true;
+    try {
+      while (lines.length < parts.length) await insertLine(lines.length);
+      while (lines.length > parts.length) removeLine(lines.at(-1), lines.at(-2));
+      for (let index = 0; index < parts.length; index += 1) {
+        const field = await setLineValue(index, parts[index]);
+        restorePlaceholders(field); // Empty slots ({}) in the loaded LaTeX get their boxes.
+      }
+    } finally {
+      loading = false;
+    }
     if (!lines.includes(mathfield)) mathfield = lines[0];
   }
 
   /** The document as LaTeX: one line per equation line, separated by \\. */
   function documentLatex() {
-    return lines.map(field => portableLatex(field.getValue('latex'))).join(' \\\\\n');
+    return lines.map(field => withoutPlaceholders(portableLatex(field.getValue('latex')))).join(' \\\\\n');
+  }
+
+  /** Empty slots are an editing aid; in LaTeX they are empty groups, as classic editors write them. */
+  function withoutPlaceholders(latex) {
+    return latex.replace(/\{\\placeholder\{\}\}/g, '{}').replace(/\\placeholder\{\}/g, '{}');
   }
 
   /** Rewrites MathLive output that standard LaTeX (and MathJax) rejects, e.g. `\middle{|}` or `\bm`. */
@@ -521,18 +550,25 @@
     return model.selectionIsPlaceholder ? model.at(Math.max(start, end)) : model.at(model.position);
   }
 
-  /** Puts a placeholder into every empty slot. Returns true if anything changed. */
-  function restorePlaceholders() {
-    const model = fieldModel();
+  /**
+   * Puts a placeholder into every empty slot of `field` (an empty `{}` group counts as a slot,
+   * except the base of a prescript). The caret keeps its place; in an empty slot it selects the
+   * new placeholder. Returns true if anything changed.
+   */
+  function restorePlaceholders(field = mathfield) {
+    const model = fieldModel(field);
     const Placeholder = placeholderClass();
-    if (!model || !Placeholder || restoringPlaceholders || !model.selectionIsCollapsed) return false;
+    if (!model || !Placeholder || restoringPlaceholders) return false;
+    const collapsed = model.selectionIsCollapsed;
+    if (field === mathfield && !collapsed) return false;
     const anchor = model.at(model.position);
     let anchorPlaceholder = null;
     let changed = false;
     for (const atom of model.atoms) {
-      // Empty groups ({} before prescripts) and text are intentionally empty.
-      if (atom.isRoot || atom.type === 'group' || atom.mode === 'text' || !atom.branches?.length) continue;
+      if (atom.isRoot || atom.mode === 'text' || !atom.branches?.length) continue;
+      const prescriptBase = atom.type === 'group' && atom.branches.some(branch => SCRIPT_BRANCHES.includes(branch));
       for (const branch of atom.branches) {
+        if (prescriptBase && branch === 'body') continue;
         if (!hasNoAtoms(atom, branch)) continue;
         const placeholder = new Placeholder();
         atom.addChild(placeholder, branch);
@@ -546,8 +582,10 @@
     restoringPlaceholders = true;
     try {
       model.contentDidChange({ inputType: 'insertText' });
-      if (anchorPlaceholder) selectPlaceholderAt(model.offsetOf(anchorPlaceholder));
-      else mathfield.position = model.offsetOf(anchor);
+      if (field === mathfield) {
+        if (anchorPlaceholder) selectPlaceholderAt(model.offsetOf(anchorPlaceholder));
+        else mathfield.position = model.offsetOf(anchor);
+      }
     } finally {
       restoringPlaceholders = false;
     }
@@ -567,44 +605,149 @@
     else mathfield.position = offset;
   }
 
-  function selectAtom(model, atom) {
-    const start = model.offsetOf(atom) - (atom.children?.length ?? 0) - 1;
-    // An operator's empty operand (the integrand of ∫□) goes with it.
-    const operand = LARGE_OPERATORS.has(atom.type) && atom.rightSibling?.type === 'placeholder' ? atom.rightSibling : atom;
-    mathfield.selection = { ranges: [[start, model.offsetOf(operand)]] };
+  /** The slots of a structure in navigation order: an operator's lower limit comes before its upper one. */
+  function slotOrder(atom) {
+    const branches = atom?.branches ?? [];
+    if (!LARGE_OPERATORS.has(atom.type)) return branches;
+    const rank = branch => ({ subscript: 0, superscript: 1 })[branch] ?? 2;
+    return [...branches].sort((a, b) => rank(a) - rank(b));
+  }
+
+  const isStructure = atom => !!atom && atom.type !== 'first' && (atom.branches?.length ?? 0) > 0;
+  const hasOwnSlots = atom => (atom.branches ?? []).some(branch => !SCRIPT_BRANCHES.includes(branch));
+  const allSlotsEmpty = atom => (atom.branches ?? []).every(branch => isSlotEmpty(atom, branch));
+
+  /** An operator's empty operand (the □ after ∑ or ∫) belongs to it. */
+  function operandOf(atom) {
+    return LARGE_OPERATORS.has(atom?.type) && atom.rightSibling?.type === 'placeholder' ? atom.rightSibling : null;
+  }
+
+  function atomRange(model, atom) {
+    return [model.offsetOf(atom) - (atom.children?.length ?? 0) - 1, model.offsetOf(operandOf(atom) ?? atom)];
+  }
+
+  let pendingScripts = null; // The script structure selected by a first Backspace.
+
+  /** Removes the (empty) scripts of `owner` with MathLive's own deletion, leaving the caret after it. */
+  function removeScripts(owner) {
+    const model = fieldModel();
+    for (const branch of SCRIPT_BRANCHES) {
+      const placeholder = branchAtoms(owner, branch).find(atom => atom.type === 'placeholder');
+      if (!placeholder) continue;
+      selectPlaceholderAt(model.offsetOf(placeholder));
+      mathfield.executeCommand('deleteBackward');
+    }
+    mathfield.position = model.offsetOf(owner);
+    syncFromField();
   }
 
   /**
-   * Backspace in an empty slot selects the structure that owns it, so a second Backspace deletes it.
-   * An empty script on an ordinary symbol (x^□) is removed at once, leaving the symbol.
+   * Backspace as in classic equation editors: in an empty slot it selects the slot's structure
+   * (a second Backspace deletes it); right after a structure it deletes the structure if all its
+   * slots are empty and selects it otherwise. An empty script is selected and then removed on its own.
    */
-  function backspaceInEmptySlot() {
+  function backspace() {
     const model = fieldModel();
     if (!model) return false;
-    const atom = caretAtom(model);
-    if (!atom || !['first', 'placeholder'].includes(atom.type)) return false;
-    if (!model.selectionIsPlaceholder && !model.selectionIsCollapsed) return false;
-    const owner = atom.parent;
-    const branch = atom.parentBranch;
-    if (!owner || owner.isRoot || !isSlotEmpty(owner, branch)) return false;
-    if (SCRIPT_BRANCHES.includes(branch) && !LARGE_OPERATORS.has(owner.type)) {
-      const scripts = (owner.branches ?? []).filter(other => SCRIPT_BRANCHES.includes(other));
-      if (scripts.some(other => !isSlotEmpty(owner, other))) {
-        selectAtom(model, owner);
-        return true;
-      }
-      restoringPlaceholders = true;
-      try {
-        for (const script of scripts) owner.removeBranch(script);
-        model.contentDidChange({ inputType: 'deleteContentBackward' });
-        mathfield.position = model.offsetOf(owner);
-      } finally {
-        restoringPlaceholders = false;
-      }
-      syncFromField();
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    if (pendingScripts?.field === mathfield && pendingScripts.start === start && pendingScripts.end === end) {
+      const { owner } = pendingScripts;
+      pendingScripts = null;
+      removeScripts(owner);
       return true;
     }
-    selectAtom(model, owner);
+    pendingScripts = null;
+    if (!model.selectionIsPlaceholder && !model.selectionIsCollapsed) return false;
+    const atom = caretAtom(model);
+
+    // In an operator's empty operand (the □ after ∑): the operator and operand go together.
+    if (model.selectionIsPlaceholder && atom?.parent?.isRoot && LARGE_OPERATORS.has(atom.leftSibling?.type)) {
+      mathfield.selection = { ranges: [atomRange(model, atom.leftSibling)] };
+      return true;
+    }
+
+    // In an empty slot.
+    if (atom && ['first', 'placeholder'].includes(atom.type) && atom.parent && !atom.parent.isRoot &&
+        isSlotEmpty(atom.parent, atom.parentBranch)) {
+      const owner = atom.parent;
+      const range = atomRange(model, owner);
+      mathfield.selection = { ranges: [range] };
+      if (SCRIPT_BRANCHES.includes(atom.parentBranch) && !LARGE_OPERATORS.has(owner.type) && !hasOwnSlots(owner)) {
+        if (owner.branches.filter(branch => SCRIPT_BRANCHES.includes(branch)).every(branch => isSlotEmpty(owner, branch))) {
+          pendingScripts = { field: mathfield, owner, start: range[0], end: range[1] };
+        }
+      }
+      return true;
+    }
+
+    // Right after a structure (or after an operator's empty operand).
+    if (!model.selectionIsCollapsed) return false;
+    let before = model.at(model.position);
+    if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
+    if (!isStructure(before)) return false;
+    if (!hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
+      // A symbol with scripts (x²): step into the last script.
+      const last = slotOrder(before).at(-1);
+      moveCaretTo(model.offsetOf(branchAtoms(before, last).at(-1)));
+      return true;
+    }
+    mathfield.selection = { ranges: [atomRange(model, before)] };
+    if (allSlotsEmpty(before)) {
+      mathfield.executeCommand('deleteBackward');
+      syncFromField();
+    }
+    return true;
+  }
+
+  /**
+   * ← / →: move by one step in slot order. A selected placeholder is a caret inside its empty slot;
+   * moving onto an empty slot selects its placeholder so typing replaces it; at the end of a line
+   * the caret continues on the next line.
+   */
+  function moveHorizontally(direction) {
+    const model = fieldModel();
+    if (!model) return false;
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    if (!model.selectionIsCollapsed && !model.selectionIsPlaceholder) {
+      mathfield.position = direction > 0 ? end : start;
+      return true;
+    }
+    const position = model.selectionIsPlaceholder ? (direction > 0 ? end : start) : model.position;
+    const here = model.at(position);
+    const lineIndex = lines.indexOf(mathfield);
+    const enterSlot = (owner, branch, atEnd) => {
+      const atoms = branchAtoms(owner, branch);
+      moveCaretTo(model.offsetOf(atEnd ? atoms.at(-1) : atoms[0]));
+    };
+    if (direction > 0) {
+      const next = here.rightSibling;
+      if (next) {
+        if (next.type === 'placeholder') selectPlaceholderAt(model.offsetOf(next));
+        else if (isStructure(next)) enterSlot(next, slotOrder(next)[0], false);
+        else mathfield.position = model.offsetOf(next);
+        return true;
+      }
+      const owner = here.parent;
+      if (!owner || owner.isRoot) return moveToLine(lineIndex + 1, 0, 'start') || true;
+      const order = slotOrder(owner);
+      const following = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
+      if (following !== undefined) enterSlot(owner, following, false);
+      else if (operandOf(owner)) selectPlaceholderAt(model.offsetOf(operandOf(owner))); // From the limits into the operand.
+      else mathfield.position = model.offsetOf(owner);
+      return true;
+    }
+    if (here.type !== 'first') {
+      if (here.type === 'placeholder') selectPlaceholderAt(model.offsetOf(here));
+      else if (isStructure(here)) enterSlot(here, slotOrder(here).at(-1), true);
+      else mathfield.position = model.offsetOf(here.leftSibling);
+      return true;
+    }
+    const owner = here.parent;
+    if (!owner || owner.isRoot) return moveToLine(lineIndex - 1, 0, 'end') || true;
+    const order = slotOrder(owner);
+    const preceding = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
+    if (preceding !== undefined) enterSlot(owner, preceding, true);
+    else mathfield.position = model.offsetOf(owner.leftSibling);
     return true;
   }
 
@@ -618,8 +761,8 @@
       mathfield.executeCommand(direction > 0 ? 'moveToNextPlaceholder' : 'moveToPreviousPlaceholder');
       return true;
     }
-    const branches = owner.branches ?? [];
-    const target = branches[branches.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
+    const order = slotOrder(owner);
+    const target = order[order.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
     if (target !== undefined) {
       moveCaretTo(model.offsetOf(branchAtoms(owner, target).at(-1)));
     } else {
@@ -740,7 +883,7 @@
       case 'backspace':
         if (shift) return false;
         if (collapsed && model.position === 0 && index > 0) { mergeLines(index - 1, index); return true; }
-        return backspaceInEmptySlot();
+        return backspace();
       case 'forwarddelete':
         if (collapsed && model.position === mathfield.lastOffset && index < lines.length - 1) {
           mergeLines(index, index + 1);
@@ -755,11 +898,8 @@
         moveVertically(key === 'up' ? -1 : 1);
         return true; // With nothing above or below, the caret stays where it is.
       case 'left':
-        if (!shift && collapsed && model.position === 0) return moveToLine(index - 1, 0, 'end') || true;
-        return false;
       case 'right':
-        if (!shift && collapsed && model.position === mathfield.lastOffset) return moveToLine(index + 1, 0, 'start') || true;
-        return false;
+        return shift ? false : moveHorizontally(key === 'right' ? 1 : -1);
       default:
         return false;
     }
@@ -799,10 +939,7 @@
       }
       return true;
     }
-    if (command === 'left' && model?.selectionIsCollapsed && model.position === 0) return moveToLine(index - 1, 0, 'end') || true;
-    if (command === 'right' && model?.selectionIsCollapsed && model.position === mathfield.lastOffset) {
-      return moveToLine(index + 1, 0, 'start') || true;
-    }
+    if ((command === 'left' || command === 'right') && model) return moveHorizontally(command === 'right' ? 1 : -1);
     mathfield.executeCommand({
       left: 'moveToPreviousChar', right: 'moveToNextChar',
       lineStart: 'moveToMathfieldStart', lineEnd: 'moveToMathfieldEnd',
@@ -813,7 +950,7 @@
   // ---------------------------------------------------------------- synchronization
 
   function syncFromField() {
-    if (!mathfield) return;
+    if (!mathfield || loading) return;
     if (!restoringPlaceholders) restorePlaceholders();
     const latex = documentLatex();
     if (latex === state.latex) return;
