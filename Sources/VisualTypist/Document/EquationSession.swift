@@ -158,10 +158,19 @@ final class EquationSession {
         }
     }
 
+    /// The selected part of the equation as LaTeX, or nil when nothing is selected.
+    private func selectedLaTeX() async -> String? {
+        try? await bridge.call("return window.vt.selectionLatex()") as? String
+    }
+
+    /// Copies the selection's LaTeX, or the whole document's when nothing is selected.
     func copyLaTeX() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(document.latex, forType: .string)
-        bridge.toast("LaTeX copied")
+        Task {
+            let latex = await selectedLaTeX() ?? document.latex
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(latex, forType: .string)
+            bridge.toast("LaTeX copied")
+        }
     }
 
     func copyMathML() {
@@ -178,9 +187,11 @@ final class EquationSession {
         }
     }
 
+    /// Copies the selection, or the whole document when nothing is selected, as an image.
     func copyImage() {
-        let snapshot = document
+        var snapshot = document
         Task {
+            if let selection = await selectedLaTeX() { snapshot.latex = selection }
             do {
                 let exporter = Exporter(bridge: bridge)
                 let svg = try await exporter.data(.svg, document: snapshot, scale: pngScale)

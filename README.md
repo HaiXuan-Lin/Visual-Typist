@@ -12,6 +12,8 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
   upper ↔ lower limit, matrix rows) and lines; ⌫ in an empty slot selects its structure, and a
   second ⌫ deletes it — an emptied script is selected, then removed while its base stays.
+  Brackets (`\left…\middle…\right`) are one unit: ⌫ right after one deletes it with its
+  contents, ⌫ in one of its empty slots selects the whole bracket.
 - **Templates and accents behave like a classic editor's buttons:** an accent (`⌘H` hat, `⌘D` dot,
   `⌥T` vector…) applies to the symbol before the caret or to the selection; a template takes the
   selection into its first slot and puts the caret in the next one (a selected expression
@@ -49,14 +51,15 @@ Keys are matched by position, so `⌥K` works even though macOS would normally t
 
 While the equation has focus, its shortcuts win over menu items with the same keys — `⌘Q` makes
 a superscript and `⌘H` a wide hat, so quit or hide from the app menu (or reassign them). Menu
-commands that would collide moved: Open is `⇧⌘O` and Save As `⌥⇧⌘S`. In the equation, `⌘C`
-copies it as an image (SVG, with PDF and PNG for apps that don't take SVG) and `⌘T` copies the
-LaTeX.
+commands that would collide moved: New is `⇧⌘N`, Open `⇧⌘O` and Save As `⌥⇧⌘S`. In the equation,
+`⌘C` copies the selection (or, with nothing selected, the whole equation) as an image (SVG, with
+PDF and PNG for apps that don't take SVG) and `⌘T` copies its LaTeX. `⌘A` selects every line.
 
 | Insert | Shortcut | | Insert | Shortcut |
 | --- | --- | --- | --- | --- |
 | γ | `⌥G` | | Fraction | `⌘F` |
-| ∞ | `⌥I` | | Square root | `⌘R` |
+| ∞ | `⌘I` or `⌥I` | | Square root | `⌘R` |
+| μ / ν | `⌘M` / `⌘N` | | | |
 | π | `⌘P` | | Superscript | `⌘Q` |
 | ω | `⌘O` | | Subscript | `⌘E` or `⌘L` |
 | ψ | `⌥⇧P` | | Sub- and superscript | `⌘J` |
@@ -75,10 +78,11 @@ LaTeX.
 | Switch between symbols and LaTeX code | `⌃⇥` |
 | Apply the LaTeX code and return to the equation | `⇧↩` |
 | Type the next letter in Greek (⇧ for capitals) | `⌘G`, then a letter |
-| Font of the selection (or of the symbol before the caret): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold, `⌘I` italic) |
+| Font of the selection (or of the symbol before the caret): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold) |
+| Select all / delete the line (an empty line is removed) | `⌘A` / `⌘⌫` |
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
 | Matrix: delete row / column | `⌥⌘↑` / `⌥⌘←` |
-| Copy as image / copy LaTeX | `⌘C` / `⌘T` |
+| Copy the selection (or everything) as image / as LaTeX | `⌘C` / `⌘T` |
 
 While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
 keyboard layout so letters arrive as math; your input method returns in the LaTeX pane, where

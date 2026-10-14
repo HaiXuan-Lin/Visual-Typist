@@ -264,6 +264,45 @@ window.VT_COMMANDS = [
   'quad', 'qquad',
 ];
 
+// Further commands that classic equation editors accept.
+window.VT_COMMANDS.push(
+  'Bbbk', 'Box', 'Bumpeq', 'Cap', 'Cup', 'Diamond', 'Join', 'Lleftarrow', 'Lsh', 'Rrightarrow', 'Rsh', 'Subset',
+  'Supset', 'Vdash', 'Vvdash', 'backepsilon', 'backsim', 'backsimeq', 'bigtriangledown', 'bigtriangleup',
+  'blacklozenge', 'blacktriangle', 'blacktriangledown', 'blacktriangleleft', 'blacktriangleright', 'bmod',
+  'bumpeq', 'centerdot', 'circeq', 'circledS', 'circledast', 'circledcirc', 'circleddash', 'colon',
+  'curlyeqprec', 'curlyeqsucc', 'curlyvee', 'curlywedge', 'curvearrowleft', 'curvearrowright', 'daleth',
+  'dashleftarrow', 'dashrightarrow', 'diagdown', 'diagup', 'doteqdot', 'dotsb', 'dotsc', 'dotsi', 'dotsm',
+  'doublebarwedge', 'doublecap', 'doublecup', 'downdownarrows', 'downharpoonright', 'enspace', 'eqcirc',
+  'eqqcolon', 'eqsim', 'eqslantgtr', 'eqslantless', 'eth', 'fallingdotseq', 'geqq', 'gnapprox', 'gneq', 'gneqq',
+  'gnsim', 'gtrapprox', 'gtrdot', 'gtreqless', 'gtreqqless', 'gtrless', 'gvertneqq', 'iiiint', 'lbrace',
+  'lbrack', 'leftarrowtail', 'leftleftarrows', 'leftrightharpoons', 'leftrightsquigarrow', 'leftthreetimes',
+  'leqq', 'lessapprox', 'lessdot', 'lesseqgtr', 'lesseqqgtr', 'lessgtr', 'lhd', 'lnapprox', 'lneq', 'lneqq',
+  'lnsim', 'looparrowleft', 'looparrowright', 'lvertneqq', 'maltese', 'mho', 'nLeftarrow', 'nLeftrightarrow',
+  'nRightarrow', 'nVDash', 'nVdash', 'negthinspace', 'ngeqq', 'ngeqslant', 'nleftarrow', 'nleftrightarrow',
+  'nleqq', 'nleqslant', 'nonumber', 'not', 'nprec', 'npreceq', 'nrightarrow', 'nshortmid', 'nshortparallel',
+  'nsubseteqq', 'nsucc', 'nsucceq', 'nsupseteq', 'nsupseteqq', 'ntriangleleft', 'ntrianglelefteq',
+  'ntriangleright', 'ntrianglerighteq', 'nvDash', 'nvdash', 'owns', 'pitchfork', 'precapprox', 'preccurlyeq',
+  'precnapprox', 'precneqq', 'precnsim', 'precsim', 'rbrace', 'rbrack', 'rhd', 'rightarrowtail',
+  'rightrightarrows', 'rightthreetimes', 'risingdotseq', 'shortmid', 'shortparallel', 'small', 'smallfrown',
+  'smallint', 'smallsetminus', 'smallsmile', 'sqsubset', 'sqsupset', 'subseteqq', 'subsetneqq', 'succapprox',
+  'succcurlyeq', 'succnapprox', 'succneqq', 'succnsim', 'succsim', 'supseteqq', 'supsetneqq', 'textperthousand',
+  'thickapprox', 'thicksim', 'thinspace', 'triangledown', 'triangleleft', 'trianglelefteq', 'triangleright',
+  'trianglerighteq', 'twoheadleftarrow', 'unlhd', 'unrhd', 'upharpoonleft', 'upharpoonright', 'upuparrows',
+  'varDelta', 'varGamma', 'varLambda', 'varOmega', 'varPhi', 'varPi', 'varPsi', 'varSigma', 'varTheta',
+  'varUpsilon', 'varXi', 'varinjlim', 'varkappa', 'varliminf', 'varlimsup', 'varprojlim', 'varpropto',
+  'varsubsetneq', 'varsubsetneqq', 'varsupsetneq', 'varsupsetneqq', 'vartriangle', 'vartriangleleft',
+  'vartriangleright', 'veebar',
+);
+
+// Commands with arguments, offered as templates (#0 is the first slot, #? the next one).
+window.VT_COMMAND_TEMPLATES = [
+  '\\dfrac{#0}{#?}', '\\tfrac{#0}{#?}', '\\textbf{#0}', '\\textit{#0}', '\\textrm{#0}', '\\textsf{#0}',
+  '\\texttt{#0}', '\\textup{#0}', '\\mathit{#0}', '\\mathnormal{#0}', '\\mbox{#0}', '\\operatorname{#0}',
+  '\\mathop{#0}', '\\mathrel{#0}', '\\mathord{#0}', '\\phantom{#0}', '\\hphantom{#0}', '\\vphantom{#0}',
+  '\\pmod{#0}', '\\pod{#0}', '\\pmb{#0}', '\\xleftrightarrow{#0}', '\\xLeftarrow{#0}', '\\xLeftrightarrow{#0}',
+  '\\overbracket{#0}', '\\underbracket{#0}', '\\underleftrightarrow{#0}', '\\ddddot{#0}', '\\mod{#0}',
+];
+
 // Commands ranked first among equally good matches (the most common ones).
 window.VT_COMMON_COMMANDS = [
   'alpha', 'beta', 'gamma', 'delta', 'epsilon', 'varepsilon', 'theta', 'lambda', 'mu', 'pi', 'sigma', 'phi',

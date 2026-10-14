@@ -20,6 +20,7 @@
   let lines = [];        // One editor field per line of the document.
   let loading = false;   // True while the editor is filled from LaTeX; edits are not reported then.
   let mathfield = null;  // The line with the caret.
+  let allSelected = false; // ⌘A selected every line: the next edit or copy applies to the whole document.
   let scratchField = null;
   let overrides = {};
   let keymap = {};
@@ -58,8 +59,8 @@
     forwarddelete: '⌦', escape: '⎋', home: '↖', end: '↘',
   };
   // Menu and system commands that a recorded shortcut may not take over.
-  const RESERVED = new Set(['cmd+c', 'cmd+v', 'cmd+x', 'cmd+z', 'shift+cmd+z', 'cmd+a', 'cmd+s', 'cmd+n', 'cmd+w',
-    'cmd+m', 'cmd+,', 'cmd+tab', 'cmd+space', 'cmd+t', 'shift+cmd+o', 'alt+shift+cmd+s']);
+  const RESERVED = new Set(['cmd+c', 'cmd+v', 'cmd+x', 'cmd+z', 'shift+cmd+z', 'cmd+s', 'cmd+w', 'cmd+,', 'cmd+tab',
+    'cmd+space', 'cmd+t', 'shift+cmd+n', 'shift+cmd+o', 'alt+shift+cmd+s']);
 
   function keyName(event) {
     if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
@@ -386,6 +387,8 @@
     addColumnAfter: () => matrixCommand('addColumnAfter'),
     removeRow: () => matrixCommand('removeRow'),
     removeColumn: () => matrixCommand('removeColumn'),
+    selectAll: () => selectAll(),
+    deleteLine: () => deleteLine(),
     cursorUp: () => moveCaret('up'),
     cursorDown: () => moveCaret('down'),
     cursorLeft: () => moveCaret('left'),
@@ -406,9 +409,68 @@
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
     addColumnBefore: 'Matrix: insert column before', addColumnAfter: 'Matrix: insert column after',
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
+    selectAll: 'Select all', deleteLine: 'Delete the line',
     cursorUp: 'Move up', cursorDown: 'Move down', cursorLeft: 'Move left', cursorRight: 'Move right',
     lineStart: 'Move to start of line', lineEnd: 'Move to end of line',
   };
+
+  function selectAll() {
+    if (codeFocused()) { codeArea.select(); return true; }
+    if (!mathfield) return false;
+    for (const field of lines) field.executeCommand('selectAll');
+    mathfield.focus();
+    allSelected = lines.length > 1 || mathfield.lastOffset > 0;
+    return true;
+  }
+
+  /** Replaces the whole document with one empty line (after ⌘A, before typing). */
+  function clearDocument() {
+    allSelected = false;
+    const first = lines[0];
+    first.focus();
+    mathfield = first;
+    for (const field of lines.slice(1)) removeLine(field, first);
+    first.setValue('', { silenceNotifications: true });
+    syncFromField();
+  }
+
+  /** ⌘⌫: empties the line; an empty line is removed. */
+  function deleteLine() {
+    if (codeFocused()) {
+      const { value, selectionStart } = codeArea;
+      const start = value.lastIndexOf('\n', selectionStart - 1) + 1;
+      if (start === selectionStart && start > 0) codeArea.setRangeText('', start - 1, start, 'end'); // Join with the line above.
+      else codeArea.setRangeText('', start, selectionStart, 'end');
+      codeArea.dispatchEvent(new Event('input'));
+      return true;
+    }
+    if (!mathfield) return false;
+    const index = lines.indexOf(mathfield);
+    if (mathfield.lastOffset > 0) {
+      setLineValue(index, '').then(field => { field.focus(); syncFromField(); });
+    } else if (lines.length > 1) {
+      const target = lines[index - 1] ?? lines[index + 1];
+      removeLine(mathfield, target);
+      target.focus();
+      mathfield = target;
+      target.position = index > 0 ? target.lastOffset : 0;
+      syncFromField();
+    }
+    return true;
+  }
+
+  /** The LaTeX of the selection (the whole document after ⌘A), or null when nothing is selected. */
+  function selectionLatex() {
+    if (allSelected) return documentLatex();
+    if (codeFocused()) {
+      const { selectionStart, selectionEnd, value } = codeArea;
+      return selectionStart === selectionEnd ? null : value.slice(selectionStart, selectionEnd);
+    }
+    const model = fieldModel();
+    if (!model || model.selectionIsCollapsed || model.selectionIsPlaceholder) return null;
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    return withoutPlaceholders(portableLatex(mathfield.getValue(start, end, 'latex')));
+  }
 
   function setGreekPending(active) {
     greekPending = active;
@@ -491,8 +553,9 @@
       field.setAttribute('aria-label', 'Equation line');
       field.addEventListener('input', syncFromField);
       field.addEventListener('selection-change', () => {
-        if (composing?.mode === 'math') return;
-        if (field === mathfield && !restoringPlaceholders && restorePlaceholders()) syncFromField();
+        if (composing?.mode === 'math' || field !== mathfield || restoringPlaceholders) return;
+        if (restorePlaceholders()) syncFromField();
+        selectAdjacentPlaceholder();
       });
       field.addEventListener('focusin', () => { mathfield = field; });
     }
@@ -553,6 +616,7 @@
   /** Shows `latex` (lines separated by newlines) in the editor. */
   async function setDocumentLatex(latex) {
     if (composing?.mode === 'math') closeComposition({ keepPreedit: true }); // The content is replaced anyway.
+    allSelected = false;
     const parts = splitLines(cleanLatex(latex));
     loading = true;
     try {
@@ -618,7 +682,26 @@
 
   const sameBranch = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const branchAtoms = (atom, branch) => { try { return atom.branch(branch) ?? []; } catch (_) { return []; } };
-  const isSlotEmpty = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first' || child.type === 'placeholder');
+  const isMiddle = atom => atom?.type === 'delim' && atom.command === '\\middle';
+  const isSlotEmpty = (atom, branch) => branchAtoms(atom, branch)
+    .every(child => child.type === 'first' || child.type === 'placeholder' || isMiddle(child));
+
+  /**
+   * In \left…\middle…\right each \middle separates two slots of one branch. Returns the atoms of
+   * the slot holding `atom` (where `atom` is the atom before the caret: \middle or the branch start
+   * begins a slot) and the boundary atom before it.
+   */
+  function segmentAt(atom) {
+    const siblings = branchAtoms(atom.parent, atom.parentBranch);
+    let index = siblings.indexOf(atom);
+    while (index > 0 && !isMiddle(siblings[index]) && siblings[index].type !== 'first') index -= 1;
+    const boundary = siblings[index];
+    const atoms = [];
+    for (let next = index + 1; next < siblings.length && !isMiddle(siblings[next]); next += 1) atoms.push(siblings[next]);
+    return { boundary, atoms };
+  }
+
+  const hasMiddle = atom => atom?.type === 'leftright' && branchAtoms(atom, 'body').some(isMiddle);
   const hasNoAtoms = (atom, branch) => branchAtoms(atom, branch).every(child => child.type === 'first');
 
   /** The atom at the caret, or the selected placeholder. */
@@ -644,6 +727,18 @@
     for (const atom of model.atoms) {
       if (atom.isRoot || atom.mode === 'text' || !atom.branches?.length) continue;
       const prescriptBase = atom.type === 'group' && atom.branches.some(branch => SCRIPT_BRANCHES.includes(branch));
+      if (hasMiddle(atom)) {
+        // Each slot between \middle separators gets its own placeholder.
+        const boundaries = branchAtoms(atom, 'body').filter(child => child.type === 'first' || isMiddle(child));
+        for (const boundary of boundaries) {
+          if (segmentAt(boundary).atoms.length) continue;
+          const placeholder = new Placeholder();
+          atom.addChildAfter(placeholder, boundary);
+          changed = true;
+          if (anchor === boundary) anchorPlaceholder = placeholder;
+        }
+        continue;
+      }
       for (const branch of atom.branches) {
         if (prescriptBase && branch === 'body') continue;
         if (!hasNoAtoms(atom, branch)) continue;
@@ -667,6 +762,15 @@
       restoringPlaceholders = false;
     }
     return true;
+  }
+
+  /** A caret just before or after an empty slot's placeholder selects it (the slot is one unit). */
+  function selectAdjacentPlaceholder() {
+    const model = fieldModel();
+    if (!model?.selectionIsCollapsed) return;
+    const here = model.at(model.position);
+    if (here?.type === 'placeholder') selectPlaceholderAt(model.position);
+    else if (here?.rightSibling?.type === 'placeholder') selectPlaceholderAt(model.offsetOf(here.rightSibling));
   }
 
   function selectPlaceholderAt(offset) {
@@ -743,6 +847,19 @@
       return true;
     }
 
+    // In a bracket with \middle: an empty slot selects the whole bracket; at the start of a filled
+    // slot the separator is kept and the caret moves to the end of the slot before it.
+    if (atom && hasMiddle(atom.parent)) {
+      if (segmentAt(atom).atoms.every(child => child.type === 'placeholder')) {
+        mathfield.selection = { ranges: [atomRange(model, atom.parent)] };
+        return true;
+      }
+      if (model.selectionIsCollapsed && isMiddle(atom)) {
+        moveCaretTo(model.offsetOf(atom.leftSibling));
+        return true;
+      }
+    }
+
     // In an empty slot.
     if (atom && ['first', 'placeholder'].includes(atom.type) && atom.parent && !atom.parent.isRoot &&
         isSlotEmpty(atom.parent, atom.parentBranch)) {
@@ -762,6 +879,13 @@
     let before = model.at(model.position);
     if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
     if (!isStructure(before)) return false;
+    if (before.type === 'leftright') {
+      // A bracket is deleted as one unit, contents and all.
+      mathfield.selection = { ranges: [atomRange(model, before)] };
+      mathfield.executeCommand('deleteBackward');
+      syncFromField();
+      return true;
+    }
     if (!hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
       // A symbol with scripts (x²): step into the last script.
       const last = slotOrder(before).at(-1);
@@ -798,6 +922,7 @@
     };
     if (direction > 0) {
       const next = here.rightSibling;
+      if (isMiddle(next)) { mathfield.position = model.offsetOf(here.parent); return true; } // Out of the bracket.
       if (next) {
         if (next.type === 'placeholder') selectPlaceholderAt(model.offsetOf(next));
         else if (isStructure(next)) enterSlot(next, slotOrder(next)[0], false);
@@ -813,6 +938,7 @@
       else mathfield.position = model.offsetOf(owner);
       return true;
     }
+    if (isMiddle(here)) { mathfield.position = model.offsetOf(here.parent.leftSibling); return true; } // Out of the bracket.
     if (here.type !== 'first') {
       if (here.type === 'placeholder') selectPlaceholderAt(model.offsetOf(here));
       else if (isStructure(here)) enterSlot(here, slotOrder(here).at(-1), true);
@@ -836,6 +962,18 @@
     const owner = atom?.parent;
     if (!owner || owner.isRoot) {
       mathfield.executeCommand(direction > 0 ? 'moveToNextPlaceholder' : 'moveToPreviousPlaceholder');
+      return true;
+    }
+    if (hasMiddle(owner)) {
+      const boundaries = branchAtoms(owner, 'body').filter(child => child.type === 'first' || isMiddle(child));
+      const current = boundaries.indexOf(segmentAt(atom).boundary);
+      const targetBoundary = boundaries[current + direction];
+      if (targetBoundary) {
+        const { atoms } = segmentAt(targetBoundary);
+        moveCaretTo(model.offsetOf(atoms.at(-1) ?? targetBoundary));
+      } else {
+        mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(owner.leftSibling);
+      }
       return true;
     }
     const order = slotOrder(owner);
@@ -1332,6 +1470,10 @@
       }
     }
     for (const name of VT_COMMANDS) add({ name, label: `\\${name}`, latex: `\\${name}`, preview: `\\${name}` });
+    for (const latex of VT_COMMAND_TEMPLATES) {
+      const item = { id: `command:${latex}`, latex };
+      add({ name: /^\\([a-zA-Z]+)/.exec(latex)[1], label: latex.replace(/#[@0-9?]/g, ''), item, preview: previewLatex(item) });
+    }
     const common = new Map(VT_COMMON_COMMANDS.map((name, index) => [name, index]));
     entries.forEach((entry, index) => { entry.rank = common.has(entry.name) ? common.get(entry.name) - 1000 : index; });
     return entries;
@@ -1608,6 +1750,24 @@
 
   window.addEventListener('keydown', event => {
     if (recording) return handleRecordingKey(event);
+    if (allSelected && keyName(event) && !['cmd+a', 'cmd+c', 'cmd+t'].includes(comboFromEvent(event))) {
+      const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+      if (plain && (event.key === 'Backspace' || event.key === 'Delete')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        clearDocument();
+        return;
+      }
+      if (plain && event.key.length === 1 && event.key !== '\\') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        clearDocument();
+        mathfield.executeCommand(['typedText', event.key]); // The character starts the new content.
+        syncFromField();
+        return;
+      }
+      allSelected = false;
+    }
     if (composing && handleCompositionKey(event)) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1826,6 +1986,7 @@
     });
   }
   document.addEventListener('mousedown', event => {
+    allSelected = false;
     if (composing && !$('candidates').contains(event.target)) closeComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
     if (recording && !$('recorder').contains(event.target)) stopRecording();
@@ -1934,6 +2095,7 @@
       return COMMANDS[name]();
     },
     runShortcut(combo) { return runShortcut(combo); },
+    selectionLatex,
     setShortcutOverrides(raw) { overrides = sanitizeOverrides(raw); rebuildKeymap(); },
     toast,
     async exportSVG(snapshot) {

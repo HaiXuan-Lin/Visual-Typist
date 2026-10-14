@@ -135,7 +135,8 @@ struct EditorCommands: Commands {
         }
 
         CommandGroup(replacing: .newItem) {
-            Button("New") { session?.newDocument() }.keyboardShortcut("n")
+            // ⌘N types ν in the editor, so New uses ⇧⌘N.
+            Button("New") { session?.newDocument() }.keyboardShortcut("n", modifiers: [.command, .shift])
             // ⌘O inserts ω in the editor (AxMath's Ctrl+O), so Open uses ⇧⌘O.
             Button("Open…") { session?.open() }.keyboardShortcut("o", modifiers: [.command, .shift])
         }

@@ -18,6 +18,8 @@ window.VT_DEFAULT_KEYMAP = {
   'alt+shift+p': { insert: 'psi' },
   'cmd+shift+p': { insert: 'partial' },
   'alt+i': { insert: 'infty' },
+  'cmd+m': { insert: 'mu' },
+  'cmd+n': { insert: 'nu' },
   "cmd+'": { insert: 'prime' },
   'cmd+r': { insert: 'sqrt' },
   'cmd+f': { insert: 'frac' },
@@ -35,6 +37,10 @@ window.VT_DEFAULT_KEYMAP = {
   'cmd+shift+i': { insert: 'int-limits' },
   'cmd+shift+s': { insert: 'sum-limits' },
 
+  // Selection and lines
+  'cmd+a': { command: 'selectAll' },
+  'cmd+backspace': { command: 'deleteLine' },
+
   // Caret movement
   'alt+w': { command: 'cursorUp' },
   'alt+s': { command: 'cursorDown' },
@@ -48,7 +54,7 @@ window.VT_DEFAULT_KEYMAP = {
   'shift+enter': { command: 'applyCode' },
   'cmd+g': { command: 'greekNext' },
   'cmd+b': { command: 'fontBold' },
-  'cmd+i': { command: 'fontItalic' },
+  'cmd+i': { insert: 'infty' },
   'cmd+1': { command: 'fontRoman' },
   'cmd+2': { command: 'fontNormal' },
   'cmd+3': { command: 'fontBold' },
