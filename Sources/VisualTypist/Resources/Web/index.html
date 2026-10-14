@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file: 'unsafe-eval'; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <title>Visual Typist</title>
+  <link rel="stylesheet" href="vendor/mathlive/mathlive-fonts.css">
+  <link rel="stylesheet" href="app.css">
+  <script defer src="mathjax-config.js"></script>
+  <script defer src="vendor/mathlive/mathlive.min.js"></script>
+  <script defer src="vendor/mathjax/tex-svg-full.js"></script>
+  <script defer src="palette.js"></script>
+  <script defer src="keymap.js"></script>
+  <script defer src="editor.js"></script>
+</head>
+<body>
+  <main id="app">
+    <section id="canvas" aria-label="Equation">
+      <div id="field-host"></div>
+      <div id="greek-indicator" hidden>Greek</div>
+    </section>
+
+    <div id="splitter" role="separator" aria-orientation="horizontal" title="Drag to resize"></div>
+
+    <nav id="toolbar" aria-label="Toolbar">
+      <div class="group">
+        <button data-action="new" title="New (⌘N)"><svg viewBox="0 0 20 20"><path d="M5 2.5h6.5L15 6v11.5H5z M11.5 2.5V6H15"/></svg></button>
+        <button data-action="open" title="Open (⌘O)"><svg viewBox="0 0 20 20"><path d="M2.5 5.5v10h13l2-7h-13l-2 7 M2.5 5.5V4h5l1.5 1.5h6.5v3"/></svg></button>
+        <button data-action="save" title="Save (⌘S)"><svg viewBox="0 0 20 20"><path d="M3.5 3.5h11l2 2v11h-13z M6.5 3.5v4h6v-4 M6 16.5v-5h8v5"/></svg></button>
+      </div>
+      <div class="group">
+        <button data-command="undo" title="Undo (⌘Z)"><svg viewBox="0 0 20 20"><path d="M7 4.5 3.5 8 7 11.5 M3.5 8h9a4 4 0 0 1 0 8H9"/></svg></button>
+        <button data-command="redo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 20 20"><path d="M13 4.5 16.5 8 13 11.5 M16.5 8h-9a4 4 0 0 0 0 8H11"/></svg></button>
+      </div>
+      <div class="group">
+        <button data-command="styleBold" class="glyph bold" title="Bold (⌃3)">B</button>
+        <button data-command="styleItalic" class="glyph italic" title="Italic (⌃2)">I</button>
+        <button data-command="styleRegular" class="glyph roman" title="Upright (⌃1)">A</button>
+        <select id="font-size" title="Font size"></select>
+        <label class="color" title="Color"><input id="color" type="color" value="#17191d"></label>
+      </div>
+      <div class="group">
+        <button data-action="copyLatex" class="text" title="Copy LaTeX (⌥⌘C)">TeX</button>
+        <button data-action="copyImage" title="Copy as Image (⇧⌘C)"><svg viewBox="0 0 20 20"><path d="M6.5 6.5h10v10h-10z M13.5 6.5v-3h-10v10h3"/></svg></button>
+        <button id="export-button" title="Export"><svg viewBox="0 0 20 20"><path d="M10 12.5V2.5 M6.5 6 10 2.5 13.5 6 M4.5 9.5v8h11v-8"/></svg></button>
+      </div>
+      <div class="spacer"></div>
+      <div class="segmented" role="tablist" aria-label="Bottom pane">
+        <button role="tab" data-mode="symbols" title="Symbols (⌃⇥)">Symbols</button>
+        <button role="tab" data-mode="code" title="LaTeX code (⌃⇥)">LaTeX</button>
+      </div>
+    </nav>
+
+    <section id="bottom">
+      <div id="symbols-pane">
+        <div id="tabs" role="tablist" aria-label="Symbol categories"></div>
+        <div id="grid" aria-label="Symbols"></div>
+      </div>
+      <div id="code-pane" hidden>
+        <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"
+          aria-label="LaTeX code" placeholder="Type LaTeX here. It updates the equation as you type; ⇧↩ returns to the equation."></textarea>
+        <div id="code-status" role="status"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="export-menu" class="popover" hidden>
+    <button data-format="pdf">PDF</button>
+    <button data-format="png">PNG</button>
+    <button data-format="svg">SVG</button>
+    <button data-format="latex">LaTeX</button>
+    <button data-format="mathml">MathML</button>
+  </div>
+
+  <div id="recorder" class="popover" hidden>
+    <div class="recorder-title"></div>
+    <div class="recorder-keys">Press a shortcut…</div>
+    <div class="recorder-hint">⎋ cancel · ⌫ remove</div>
+  </div>
+
+  <div id="shortcuts" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-labelledby="shortcuts-title">
+      <header>
+        <h1 id="shortcuts-title">Keyboard Shortcuts</h1>
+        <input id="shortcut-filter" type="search" placeholder="Filter">
+      </header>
+      <p class="sheet-hint">Click a shortcut to change it. Right-click any palette button to give it a shortcut.</p>
+      <div id="shortcut-list"></div>
+      <footer>
+        <button id="shortcuts-reset">Restore Defaults</button>
+        <span class="spacer"></span>
+        <button id="shortcuts-done" class="primary">Done</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

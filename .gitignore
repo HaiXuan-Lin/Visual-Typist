@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+node_modules/
+*.app
+.DS_Store
+*.log

@@ -1,0 +1,11 @@
+{
+  "name": "visual-typist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned versions of the math engines bundled with Visual Typist (see scripts/update-vendor.sh).",
+  "license": "MIT",
+  "devDependencies": {
+    "mathjax-full": "3.2.2",
+    "mathlive": "0.109.2"
+  }
+}
