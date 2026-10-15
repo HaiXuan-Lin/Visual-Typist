@@ -1127,19 +1127,14 @@
     return [model.offsetOf(atom) - (atom.children?.length ?? 0) - 1, model.offsetOf(operandOf(atom) ?? atom)];
   }
 
-  let pendingScripts = null; // The script structure selected by a first Backspace.
+  let pendingDelete = null; // The structure a first Backspace selected; a second one deletes it.
 
-  /** Removes the (empty) scripts of `owner` with MathLive's own deletion, leaving the caret after it. */
-  function removeScripts(owner) {
-    const model = fieldModel();
-    for (const branch of SCRIPT_BRANCHES) {
-      const placeholder = branchAtoms(owner, branch).find(atom => atom.type === 'placeholder');
-      if (!placeholder) continue;
-      selectPlaceholderAt(model.offsetOf(placeholder));
-      mathfield.executeCommand('deleteBackward');
-    }
-    mathfield.position = model.offsetOf(owner);
-    syncFromField();
+  /** Selects a structure so that the next Backspace deletes it (scripts: both, the base stays). */
+  function selectForDeletion(model, atom) {
+    const range = atomRange(model, atom);
+    mathfield.selection = { ranges: [range] };
+    pendingDelete = { field: mathfield, atom, start: range[0], end: range[1] };
+    return true;
   }
 
   /**
@@ -1151,29 +1146,25 @@
     const model = fieldModel();
     if (!model) return false;
     const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
-    if (pendingScripts?.field === mathfield && pendingScripts.start === start && pendingScripts.end === end) {
-      const { owner } = pendingScripts;
-      pendingScripts = null;
-      removeScripts(owner);
+    if (pendingDelete?.field === mathfield && pendingDelete.start === start && pendingDelete.end === end) {
+      const { atom } = pendingDelete;
+      pendingDelete = null;
+      deleteStructure(model, atom);
       return true;
     }
-    pendingScripts = null;
+    pendingDelete = null;
     if (!model.selectionIsPlaceholder && !model.selectionIsCollapsed) return false;
     const atom = caretAtom(model);
 
     // In an operator's empty operand (the □ after ∑): the operator and operand go together.
     if (model.selectionIsPlaceholder && atom?.parent?.isRoot && LARGE_OPERATORS.has(atom.leftSibling?.type)) {
-      mathfield.selection = { ranges: [atomRange(model, atom.leftSibling)] };
-      return true;
+      return selectForDeletion(model, atom.leftSibling);
     }
 
     // In a bracket with \middle: an empty slot selects the whole bracket; at the start of a filled
     // slot the separator is kept and the caret moves to the end of the slot before it.
     if (atom && hasMiddle(atom.parent)) {
-      if (segmentAt(atom).atoms.every(child => child.type === 'placeholder')) {
-        mathfield.selection = { ranges: [atomRange(model, atom.parent)] };
-        return true;
-      }
+      if (segmentAt(atom).atoms.every(child => child.type === 'placeholder')) return selectForDeletion(model, atom.parent);
       if (model.selectionIsCollapsed && isMiddle(atom)) {
         moveCaretTo(model.offsetOf(atom.leftSibling));
         return true;
@@ -1183,22 +1174,13 @@
     // At the start of a filled slot: select the structure (a second Backspace deletes it).
     if (model.selectionIsCollapsed && atom?.type === 'first' && atom.parent && !atom.parent.isRoot &&
         !isSlotEmpty(atom.parent, atom.parentBranch)) {
-      mathfield.selection = { ranges: [atomRange(model, operatorOf(atom.parent) ?? atom.parent)] };
-      return true;
+      return selectForDeletion(model, operatorOf(atom.parent) ?? atom.parent);
     }
 
     // In an empty slot.
     if (atom && ['first', 'placeholder'].includes(atom.type) && atom.parent && !atom.parent.isRoot &&
         isSlotEmpty(atom.parent, atom.parentBranch)) {
-      const owner = operatorOf(atom.parent) ?? atom.parent;
-      const range = atomRange(model, owner);
-      mathfield.selection = { ranges: [range] };
-      if (SCRIPT_BRANCHES.includes(atom.parentBranch) && !LARGE_OPERATORS.has(owner.type) && !hasOwnSlots(owner)) {
-        if (owner.branches.filter(branch => SCRIPT_BRANCHES.includes(branch)).every(branch => isSlotEmpty(owner, branch))) {
-          pendingScripts = { field: mathfield, owner, start: range[0], end: range[1] };
-        }
-      }
-      return true;
+      return selectForDeletion(model, operatorOf(atom.parent) ?? atom.parent);
     }
 
     // Right after a structure (or after an operator's empty operand).
@@ -1257,7 +1239,8 @@
       const owner = here.parent;
       if (!owner || owner.isRoot) return moveToLine(lineIndex + 1, 0, 'start') || true;
       const order = slotOrder(owner);
-      const following = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
+      // From either script → leaves the scripts, as in classic editors (↓ / ↑ go between them).
+      const following = isScripts(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
       if (following !== undefined) enterSlot(owner, following, false);
       else if (operandOf(owner)?.type === 'group') enterSlot(operandOf(owner), 'body', false); // From the limits into the operand.
       else if (operandOf(owner)) selectPlaceholderAt(model.offsetOf(operandOf(owner)));
