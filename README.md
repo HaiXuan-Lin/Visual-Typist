@@ -56,7 +56,9 @@ While the equation has focus, its shortcuts win over menu items with the same ke
 a superscript and `⌘H` a wide hat, so quit or hide from the app menu (or reassign them). Menu
 commands that would collide moved: New is `⇧⌘N`, Open `⇧⌘O` and Save As `⌥⇧⌘S`. In the equation,
 `⌘C` copies the selection (or, with nothing selected, the whole equation) as an image (SVG, with
-PDF and PNG for apps that don't take SVG) and `⌘T` copies its LaTeX. `⌘A` selects every line.
+PDF and PNG for apps that don't take SVG) and `⌘T` copies its LaTeX. `⌘A` selects every line: then
+typing, ⌫, paste or cut replace the document, a font (`⌘1`…`⌘9`, `⌘B`) applies to every line, and a
+template replaces several lines (within one line it goes after it) — as in classic equation editors.
 
 | Insert | Shortcut | | Insert | Shortcut |
 | --- | --- | --- | --- | --- |
@@ -84,7 +86,8 @@ PDF and PNG for apps that don't take SVG) and `⌘T` copies its LaTeX. `⌘A` se
 | Font of the selection (or of the symbol before the caret): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold) |
 | Select all / delete the line (an empty line is removed) | `⌘A` / `⌘⌫` |
 | Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
-| Matrix: delete row / column | `⌥⌘↑` / `⌥⌘←` |
+| Matrix: delete the row above / below, the column left / right | `⌥⌘↑` `⌥⌘↓` `⌥⌘←` `⌥⌘→` |
+| Undo / redo (the whole document, lines included) | `⌘Z` / `⇧⌘Z` or `⌘Y` |
 | Copy the selection (or everything) as image / as LaTeX | `⌘C` / `⌘T` |
 
 While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
@@ -125,7 +128,8 @@ scripts/                       test runner, vendor update, icon generator
 ```
 
 Documents are saved as `.vteq` (JSON with the LaTeX source and display settings). In the LaTeX
-the equation lines are separated by `\\`; multi-line documents export as a left-aligned array. The app also
+the equation lines are separated by `\\`; multi-line documents export as a left-aligned array, blank
+lines between equations included. Sizes are in points: an SVG or PDF at 32 pt is as large as 32 pt text. The app also
 opens `.tex`, `.latex` and `.txt` files containing a single equation.
 
 ## Development

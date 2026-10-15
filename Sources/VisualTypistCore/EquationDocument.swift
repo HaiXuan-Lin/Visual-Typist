@@ -104,9 +104,15 @@ public struct EquationDocument: Codable, Equatable, Sendable {
             ? String(colorHex.dropFirst()).uppercased() : "17191D"
         let size = fontSize.isFinite ? min(Self.fontSizes.upperBound, max(Self.fontSizes.lowerBound, fontSize)) : 32
         let style = displayStyle ? #"\displaystyle"# : #"\textstyle"#
-        // Several lines become a left-aligned array, one equation per row.
-        let rows = lines.map(Self.trimmed).filter { !$0.isEmpty }
-        let body = rows.count > 1 ? "\\begin{array}{l}\n" + rows.map { "\\displaystyle " + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}" : latex
+        // Several lines become a left-aligned array, one equation per row. Blank lines between
+        // equations stay (one line high); blank lines around them go.
+        var rows = lines.map(Self.trimmed)
+        while rows.first?.isEmpty == true { rows.removeFirst() }
+        while rows.last?.isEmpty == true { rows.removeLast() }
+        let rowStyle = displayStyle ? #"\displaystyle "# : ""
+        let body = rows.count > 1
+            ? "\\begin{array}{l}\n" + rows.map { $0.isEmpty ? #"\strut"# : rowStyle + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}"
+            : latex
         return """
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}
@@ -130,8 +136,10 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         var depth = 0
         for raw in latex.components(separatedBy: "\n") {
             current = current.map { $0 + "\n" + raw } ?? raw
+            // Escaped braces and an escaped \% (text, not a comment) don't count.
             var code = raw.replacingOccurrences(of: #"\\"#, with: "")
                 .replacingOccurrences(of: #"\{"#, with: "").replacingOccurrences(of: #"\}"#, with: "")
+                .replacingOccurrences(of: #"\%"#, with: "")
             if let comment = code.firstIndex(of: "%") { code = String(code[..<comment]) }
             depth += code.filter { $0 == "{" }.count - code.filter { $0 == "}" }.count
             depth += code.components(separatedBy: #"\begin{"#).count - code.components(separatedBy: #"\end{"#).count

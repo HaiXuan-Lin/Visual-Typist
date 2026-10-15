@@ -37,6 +37,11 @@ window.VT_DEFAULT_KEYMAP = {
   'cmd+shift+i': { insert: 'int-limits' },
   'cmd+shift+s': { insert: 'sum-limits' },
 
+  // Undo (⌘Y redoes, as Ctrl+Y does on Windows)
+  'cmd+z': { command: 'undo' },
+  'shift+cmd+z': { command: 'redo' },
+  'cmd+y': { command: 'redo' },
+
   // Selection and lines
   'cmd+a': { command: 'selectAll' },
   'cmd+backspace': { command: 'deleteLine' },
@@ -68,10 +73,10 @@ window.VT_DEFAULT_KEYMAP = {
   'alt+down': { command: 'addRowAfter' },
   'alt+left': { command: 'addColumnBefore' },
   'alt+right': { command: 'addColumnAfter' },
-  'cmd+alt+up': { command: 'removeRow' },
-  'cmd+alt+down': { command: 'removeRow' },
-  'cmd+alt+left': { command: 'removeColumn' },
-  'cmd+alt+right': { command: 'removeColumn' },
+  'cmd+alt+up': { command: 'removeRowAbove' },
+  'cmd+alt+down': { command: 'removeRowBelow' },
+  'cmd+alt+left': { command: 'removeColumnLeft' },
+  'cmd+alt+right': { command: 'removeColumnRight' },
 };
 
 // ⌘G followed by a letter types a Greek letter; Shift gives the capital.

@@ -82,6 +82,19 @@ struct EquationDocumentTests {
         #expect(EquationDocument(latex: "a\\ \nb  ").standaloneTeX().contains("\\displaystyle a\\  \\\\\n\\displaystyle b\n"))
     }
 
+    @Test func blankLinesBetweenEquationsAreKeptInExport() {
+        let tex = EquationDocument(latex: "a \\\\\n \\\\\nb \\\\\n").standaloneTeX()
+        #expect(tex.contains("\\displaystyle a \\\\\n\\strut \\\\\n\\displaystyle b\n\\end{array}"))
+        var inline = EquationDocument(latex: "a\nb")
+        inline.displayStyle = false
+        #expect(inline.standaloneTeX().contains("\\begin{array}{l}\na \\\\\nb\n"))
+    }
+
+    @Test func escapedPercentIsNotAComment() {
+        #expect(EquationDocument(latex: "\\text{50\\%}\nx").lines == ["\\text{50\\%}", "x"])
+        #expect(EquationDocument(latex: "\\frac{1}{% note\n2}").lines == ["\\frac{1}{% note\n2}"])
+    }
+
     @Test func standaloneTeXReimportsAsTheSameEquation() throws {
         let document = EquationDocument(latex: #"\frac{x^2+1}{\sqrt{y}}"#)
         #expect(try imported(document.standaloneTeX()) == document.latex)

@@ -55,9 +55,11 @@ struct Exporter {
         let width = equation.width + 2 * Self.margin
         let height = equation.height + 2 * Self.margin
         let background = transparent ? "" : #"<rect width="100%" height="100%" fill="white"/>"#
+        // One unit is one point (the font size is in points, as in the PDF); a size without a unit
+        // would be read as CSS pixels and come out at three quarters of the size.
         return """
         <?xml version="1.0" encoding="UTF-8"?>
-        <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="\(width)" height="\(height)" viewBox="0 0 \(width) \(height)">
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="\(width)pt" height="\(height)pt" viewBox="0 0 \(width) \(height)">
         \(background)<g transform="translate(\(Self.margin) \(Self.margin))">\(equation.svg)</g>
         </svg>
 

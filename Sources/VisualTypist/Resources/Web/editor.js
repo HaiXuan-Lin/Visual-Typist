@@ -157,11 +157,19 @@
     else delete overrides[combo];
   }
 
+  // Commands that act on a ⌘A selection themselves; any other command ends it first.
+  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
+    'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur']);
+
   function runShortcut(combo) {
     const binding = keymap[normalizeCombo(combo)];
     if (!binding) return false;
+    // A shortcut is its own undo step (the native side runs it without a keydown here).
+    inputKind = 'other';
+    history.lastKind = null;
     if (binding.insert) return insertItem(paletteById.get(binding.insert));
     if (binding.latex) return insertLatex(binding.latex);
+    if (!SELECTION_COMMANDS.has(binding.command)) setAllSelected(false);
     return COMMANDS[binding.command]?.() !== false;
   }
 
@@ -172,6 +180,7 @@
   function insertLatex(latex) {
     if (codeFocused()) return insertIntoCode(latex);
     if (!mathfield) return false;
+    leaveSelectAll({ replace: true });
     mathfield.focus();
     // A script with nothing before it (start of a slot, or an empty slot) needs an empty base: {}_{…}.
     const model = fieldModel();
@@ -198,9 +207,22 @@
    * before the caret (or the selection); a template takes the selection into its first slot and
    * puts the caret in the next one, or at the end of that slot when there is no other.
    */
+  /**
+   * What a template or symbol does with a ⌘A selection, as in classic editors: over several lines it
+   * replaces the document; within one line it goes after it. An accent ignores the selection and
+   * applies to the symbol before the caret.
+   */
+  function leaveSelectAll({ replace }) {
+    if (!allSelected) return;
+    if (replace && lines.length > 1) { clearDocument(); return; }
+    setAllSelected(false);
+    mathfield.position = mathfield.lastOffset;
+  }
+
   function insertItem(item) {
     if (!item) return false;
     if (codeFocused()) return insertIntoCode(item.latex);
+    leaveSelectAll({ replace: !item.accent });
     const model = fieldModel();
     if (!model) return insertLatex(item.latex);
     const hadSelection = !model.selectionIsCollapsed && !model.selectionIsPlaceholder;
@@ -321,6 +343,14 @@
       codeArea.dispatchEvent(new Event('input'));
       return true;
     }
+    if (allSelected) {
+      // After ⌘A a font applies to every line (each line is wrapped), and everything stays selected.
+      const restyled = lines.map(field => withoutPlaceholders(portableLatex(field.getValue('latex'))))
+        .map(line => (line.trim() ? wrap(line.trim()) : line)).join(' \\\\\n');
+      setAllSelected(false, mathfield, false);
+      setDocumentLatex(restyled).then(() => { syncFromField(); selectAll(); });
+      return true;
+    }
     const model = fieldModel();
     if (!mathfield || !model) return false;
     mathfield.focus();
@@ -377,6 +407,30 @@
     return true;
   }
 
+  /**
+   * Removes the row above or below (axis 'row', direction -1/+1) or the column left or right of
+   * the caret's cell, as classic editors do; the caret stays in its cell.
+   */
+  function removeNeighbor(axis, direction) {
+    if (codeFocused() || !mathfield) return false;
+    const model = fieldModel();
+    let cell = model && caretAtom(model);
+    while (cell && cell.parent?.type !== 'array') cell = cell.parent;
+    if (!cell) return false;
+    const array = cell.parent;
+    const [row, col] = cell.parentBranch;
+    const target = axis === 'row' ? [row + direction, col] : [row, col + direction];
+    if (target[0] < 0 || target[1] < 0 || target[0] >= array.rowCount || target[1] >= array.colCount) return true;
+    moveCaretTo(model.offsetOf(branchAtoms(array, target).at(-1)));
+    mathfield.executeCommand(axis === 'row' ? 'removeRow' : 'removeColumn');
+    const home = axis === 'row' ? [direction < 0 ? row - 1 : row, col] : [row, direction < 0 ? col - 1 : col];
+    const after = fieldModel();
+    const atoms = branchAtoms(array, home);
+    if (atoms.length) moveCaretTo(after.offsetOf(atoms.at(-1)));
+    syncFromField();
+    return true;
+  }
+
   const COMMANDS = {
     toggleMode: () => setMode(ui.mode === 'symbols' ? 'code' : 'symbols', { focus: true }),
     applyCode: () => {
@@ -396,6 +450,10 @@
     fontCalligraphic: () => setFont('mathcal'),
     fontScript: () => setFont('mathscr'),
     fontFraktur: () => setFont('mathfrak'),
+    removeRowAbove: () => removeNeighbor('row', -1),
+    removeRowBelow: () => removeNeighbor('row', 1),
+    removeColumnLeft: () => removeNeighbor('column', -1),
+    removeColumnRight: () => removeNeighbor('column', 1),
     addRowBefore: () => matrixCommand('addRowBefore'),
     addRowAfter: () => matrixCommand('addRowAfter'),
     addColumnBefore: () => matrixCommand('addColumnBefore'),
@@ -410,8 +468,8 @@
     cursorRight: () => moveCaret('right'),
     lineStart: () => moveCaret('lineStart'),
     lineEnd: () => moveCaret('lineEnd'),
-    undo: () => { mathfield?.executeCommand('undo'); syncFromField(); return true; },
-    redo: () => { mathfield?.executeCommand('redo'); syncFromField(); return true; },
+    undo: () => stepHistory(-1),
+    redo: () => stepHistory(1),
   };
 
   const COMMAND_TITLES = {
@@ -421,6 +479,8 @@
     fontBoldSymbol: 'Font: bold symbol (\\boldsymbol)', fontSans: 'Font: sans serif (\\mathsf)',
     fontMono: 'Font: typewriter (\\mathtt)', fontCalligraphic: 'Font: calligraphic (\\mathcal)',
     fontScript: 'Font: script (\\mathscr)', fontFraktur: 'Font: fraktur (\\mathfrak)',
+    removeRowAbove: 'Matrix: delete the row above', removeRowBelow: 'Matrix: delete the row below',
+    removeColumnLeft: 'Matrix: delete the column on the left', removeColumnRight: 'Matrix: delete the column on the right',
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
     addColumnBefore: 'Matrix: insert column before', addColumnAfter: 'Matrix: insert column after',
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
@@ -528,7 +588,8 @@
     let depth = 0;
     for (const raw of latex.split('\n')) {
       current = current === null ? raw : `${current}\n${raw}`;
-      const code = raw.replace(/\\\\/g, '').replace(/\\[{}]/g, '').replace(/%.*$/, '');
+      // An escaped \% is text, not the start of a comment.
+      const code = raw.replace(/\\\\/g, '').replace(/\\[{}%]/g, '').replace(/%.*$/, '');
       depth += (code.match(/\{/g) || []).length - (code.match(/\}/g) || []).length;
       depth += (code.match(/\\begin\{/g) || []).length - (code.match(/\\end\{/g) || []).length;
       if (depth <= 0) {
@@ -1302,12 +1363,80 @@
 
   // ---------------------------------------------------------------- synchronization
 
+  // ---------------------------------------------------------------- undo
+
+  // The document has one undo history, not one per line: splitting, joining and removing lines are
+  // undone with everything else. An entry is the whole document with the caret. A run of typed
+  // characters (or of deletions) is one step, as are all changes made by one command.
+  const history = { past: [], future: [], current: null, lastKind: null, grouping: false, restoring: false };
+  let inputKind = 'other'; // What the key being handled does: 'typing', 'deleting' or 'other'.
+
+  function snapshot() {
+    const model = fieldModel();
+    return { latex: state.latex, line: Math.max(0, lines.indexOf(mathfield)), offset: model ? model.position : 0 };
+  }
+
+  function resetHistory() {
+    Object.assign(history, { past: [], future: [], current: snapshot(), lastKind: null });
+  }
+
+  function recordChange() {
+    const entry = snapshot();
+    if (history.restoring || !history.current) { history.current = entry; return; }
+    const kind = inputKind;
+    const continues = history.grouping || (kind !== 'other' && kind === history.lastKind);
+    if (!continues) {
+      history.past.push(history.current);
+      if (history.past.length > 500) history.past.shift();
+    }
+    history.future = [];
+    history.current = entry;
+    history.lastKind = kind;
+    // Further changes made while handling the same event belong to this step.
+    if (!history.grouping) {
+      history.grouping = true;
+      setTimeout(() => { history.grouping = false; });
+    }
+  }
+
+  /** Undo (-1) or redo (+1). In the LaTeX pane, the text field's own undo applies. */
+  function stepHistory(direction) {
+    if (codeFocused()) { document.execCommand(direction < 0 ? 'undo' : 'redo'); return true; }
+    if (composing) closeComposition();
+    const from = direction < 0 ? history.past : history.future;
+    const to = direction < 0 ? history.future : history.past;
+    const entry = from.pop();
+    if (!entry) return true;
+    to.push(history.current);
+    history.current = entry;
+    history.lastKind = null;
+    history.restoring = true;
+    setAllSelected(false);
+    (async () => {
+      try {
+        state.latex = entry.latex;
+        await setDocumentLatex(entry.latex);
+        codeArea.value = entry.latex;
+        const field = lines[Math.min(entry.line, lines.length - 1)];
+        field.focus();
+        mathfield = field;
+        field.position = Math.min(entry.offset, field.lastOffset);
+        notifyChange();
+        scheduleValidation();
+      } finally {
+        history.restoring = false;
+      }
+    })();
+    return true;
+  }
+
   function syncFromField() {
     if (!mathfield || loading || composing?.mode === 'math') return;
     if (!restoringPlaceholders) restorePlaceholders();
     const latex = documentLatex();
     if (latex === state.latex) return;
     state.latex = latex;
+    recordChange();
     if (ui.mode === 'code' && !codeFocused()) codeArea.value = latex; // setMode fills it when shown.
     notifyChange();
     scheduleValidation();
@@ -1320,6 +1449,8 @@
     if (lines.length) setDocumentLatex(latex);
     if (latex !== state.latex) {
       state.latex = latex;
+      inputKind = 'other';
+      recordChange();
       notifyChange();
     }
     scheduleValidation();
@@ -1471,6 +1602,12 @@
       const combos = combosFor({ insert: item.id });
       tile.querySelector('.key').textContent = combos.length ? displayCombo(combos[0]) : '';
       tile.title = itemTitle(item);
+    }
+    // Toolbar buttons name their command's current shortcuts (the menu commands' are fixed).
+    for (const button of document.querySelectorAll('#toolbar [data-command]')) {
+      button.dataset.label ??= button.title;
+      const combos = combosFor({ command: button.dataset.command });
+      button.title = combos.length ? `${button.dataset.label} (${combos.map(displayCombo).join(', ')})` : button.dataset.label;
     }
   }
 
@@ -1888,7 +2025,14 @@
 
   window.addEventListener('keydown', event => {
     if (recording) return handleRecordingKey(event);
-    if (allSelected && keyName(event) && !['cmd+a', 'cmd+c', 'cmd+t'].includes(comboFromEvent(event))) {
+    if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) {
+      const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+      inputKind = plain && event.key.length === 1 && !composing ? 'typing'
+        : plain && (event.key === 'Backspace' || event.key === 'Delete') ? 'deleting' : 'other';
+      if (inputKind === 'other') history.lastKind = null; // Moving the caret ends a run of typing.
+    }
+    if (allSelected && keyName(event) && !['cmd+a', 'cmd+c', 'cmd+t', 'cmd+v', 'cmd+x'].includes(comboFromEvent(event)) &&
+        !keymap[comboFromEvent(event)]) {
       const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
       if (plain && (event.key === 'Backspace' || event.key === 'Delete')) {
         event.preventDefault();
@@ -1990,7 +2134,11 @@
   function documentTeX(latex, displayStyle) {
     // Trailing whitespace goes, except an escaped space (\ ) that the user typed.
     const trim = line => line.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, '');
-    const parts = splitLines(cleanLatex(latex)).map(line => trim(portableLatex(line))).filter(Boolean)
+    const rows = splitLines(cleanLatex(latex)).map(line => trim(portableLatex(line)));
+    // Blank lines between equations are kept, one line high; blank lines around them are not.
+    while (rows.length && !rows[0]) rows.shift();
+    while (rows.length && !rows.at(-1)) rows.pop();
+    const parts = rows.map(line => line || '\\strut')
       // An empty slot inside \text{} would put a math symbol in text mode.
       .map(line => line.replace(/\\text\{\\placeholder\{\}\}/g, '\\placeholder{}'));
     if (parts.length <= 1) return parts[0] ?? '';
@@ -2064,6 +2212,7 @@
     scratchField = await createField({ scratch: true });
     placeholderClass(); // Sizes the slots before the first line renders.
     mathfield = await insertLine(0);
+    resetHistory();
 
     await MathJax.startup.promise;
     const handlers = MathJax.startup.document.inputJax.find(jax => jax.name === 'TeX').parseOptions.handlers;
@@ -2133,9 +2282,39 @@
       post('action', { name: 'export', format: button.dataset.format });
     });
   }
+  // A paste after ⌘A replaces the whole document (pasted lines become lines).
+  document.addEventListener('paste', event => {
+    if (!allSelected || codeFocused()) return;
+    const text = event.clipboardData?.getData('text/plain');
+    if (!text) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    setAllSelected(false, mathfield, false);
+    inputKind = 'other';
+    setDocumentLatex(text).then(() => {
+      syncFromField();
+      const last = lines.at(-1);
+      last.focus();
+      mathfield = last;
+      last.position = last.lastOffset;
+    });
+  }, true);
+
+  // A cut after ⌘A takes the whole document.
+  document.addEventListener('cut', event => {
+    if (!allSelected || codeFocused()) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.clipboardData?.setData('text/plain', documentLatex());
+    inputKind = 'other';
+    clearDocument();
+  }, true);
+
   // Captured: MathLive keeps pointer events inside a line to itself. The other lines' selections
   // collapse once the click has moved the focus (changing them earlier would keep it where it was).
   document.addEventListener('pointerdown', event => {
+    inputKind = 'other';
+    history.lastKind = null; // A click ends a run of typing.
     if (!allSelected) return;
     const clicked = lines.find(field => event.composedPath().includes(field)) ?? null;
     setAllSelected(false, clicked, false); // At once: a key typed right after the click must not replace everything.
@@ -2234,6 +2413,7 @@
       if (latexChanged) {
         await setDocumentLatex(state.latex);
         codeArea.value = state.latex;
+        resetHistory(); // A document opened or replaced from outside starts a new history.
       }
       applyPresentation();
       scheduleValidation();
