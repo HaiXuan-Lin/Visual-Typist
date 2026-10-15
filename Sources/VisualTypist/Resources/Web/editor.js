@@ -537,8 +537,12 @@
     paintSpan();
   }
 
-  /** Shows the selection in every line it covers, also in the lines without focus. */
-  function paintSpan() {
+  /**
+   * Shows the selection in every line it covers, also in the lines without focus. With `redraw`,
+   * each line's selection is set anew: right after a drag MathLive may leave the selection of the
+   * line it captured the drag in undrawn, although set.
+   */
+  function paintSpan({ redraw = false } = {}) {
     lines.forEach((field, index) => {
       const covered = !!span && index >= span.from.line && index <= span.to.line;
       field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', covered);
@@ -546,7 +550,8 @@
       const start = index === span.from.line ? span.from.offset : 0;
       const end = index === span.to.line ? span.to.offset : field.lastOffset;
       const [current] = field.selection.ranges;
-      if (Math.min(...current) !== start || Math.max(...current) !== end) field.selection = { ranges: [[start, end]] };
+      if (redraw) field.selection = { ranges: [[start, start]] };
+      if (redraw || Math.min(...current) !== start || Math.max(...current) !== end) field.selection = { ranges: [[start, end]] };
     });
   }
 
@@ -778,6 +783,10 @@
       field.setAttribute('aria-label', 'Equation line');
       field.addEventListener('input', syncFromField);
       field.addEventListener('selection-change', () => {
+        // While a selection spans lines, MathLive may still move the selection of the line it captured
+        // the drag in (above the line, its hit test can fall back on the anchor and collapse it):
+        // the spanning selection is shown again once MathLive is done.
+        if (allSelected) { requestAnimationFrame(() => { if (allSelected) paintSpan(); }); return; }
         if (composing?.mode === 'math' || field !== mathfield || restoringPlaceholders) return;
         if (restorePlaceholders()) syncFromField();
         selectAdjacentPlaceholder();
@@ -2559,10 +2568,15 @@
     if (clicked && event.button === 0 && !event.shiftKey) {
       // A drag may go on into other lines; it is anchored where the press was.
       drag = { field: clicked, anchor: { line: lines.indexOf(clicked), offset: offsetAtX(clicked, event.clientX) } };
+    } else if (!clicked && event.button === 0 && (event.target === canvas || event.target === fieldHost)) {
+      // Beside a line (in the margin): the drag starts at that line's start or end and is ours alone.
+      const beside = lineBeside(event.clientY);
+      if (beside) drag = { field: null, anchor: { line: lines.indexOf(beside), offset: offsetAtX(beside, event.clientX) } };
     }
     if (!allSelected) return;
-    setAllSelected(false, clicked, false); // At once: a key typed right after the click must not replace everything.
-    document.addEventListener('pointerup', () => setTimeout(() => { if (!allSelected) collapseLines(clicked); }),
+    const kept = clicked ?? lineBeside(event.clientY); // A click beside a line places the caret in it.
+    setAllSelected(false, kept, false); // At once: a key typed right after the click must not replace everything.
+    document.addEventListener('pointerup', () => setTimeout(() => { if (!allSelected) collapseLines(kept); }),
       { once: true, capture: true });
   }, true);
 
@@ -2582,6 +2596,11 @@
     }
     return offset;
   }
+  /** The line level with y, if any. */
+  function lineBeside(y) {
+    return lines.find(field => { const box = field.getBoundingClientRect(); return y >= box.top && y < box.bottom; }) ?? null;
+  }
+
   function lineAt(y) {
     const boxes = lines.map(field => field.getBoundingClientRect());
     const index = boxes.findIndex(box => y >= box.top && y < box.bottom);
@@ -2597,10 +2616,10 @@
       return;
     }
     setSpan(drag.anchor, { line: lines.indexOf(target), offset: offsetAtX(target, event.clientX) });
-    requestAnimationFrame(paintSpan); // MathLive goes on extending the selection in the line it captured.
+    requestAnimationFrame(() => paintSpan()); // MathLive goes on extending the selection in the line it captured.
   }, true);
   document.addEventListener('pointerup', () => {
-    if (drag && allSelected) requestAnimationFrame(paintSpan);
+    if (drag && allSelected) requestAnimationFrame(() => paintSpan({ redraw: true }));
     drag = null;
   }, true);
   document.addEventListener('mousedown', event => {
@@ -2613,6 +2632,9 @@
   canvas.addEventListener('mousedown', event => {
     if (event.target === canvas || event.target === fieldHost) {
       event.preventDefault();
+      // Beside a line: the caret goes to that line's start or end; below the lines: to the end.
+      const beside = lineBeside(event.clientY);
+      if (beside) { focusAt(lines.indexOf(beside), offsetAtX(beside, event.clientX)); return; }
       const last = lines.at(-1);
       if (!last) return;
       last.focus();
