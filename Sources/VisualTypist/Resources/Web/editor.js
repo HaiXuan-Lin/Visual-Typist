@@ -188,6 +188,7 @@
     mathfield.insert(latex, {
       format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true, feedback: false,
     });
+    groupOperands();
     syncFromField();
     return true;
   }
@@ -236,12 +237,13 @@
     const model = fieldModel();
     const atom = model && caretAtom(model);
     const operator = LARGE_OPERATORS.has(atom?.parent?.type) || SCRIPT_BRANCHES.includes(atom?.parentBranch) ? atom.parent
-      : LARGE_OPERATORS.has(atom?.leftSibling?.type) ? atom.leftSibling : null;
+      : operatorOf(atom?.parent) ?? (LARGE_OPERATORS.has(atom?.leftSibling?.type) ? atom.leftSibling : null);
     if (!operator) return;
     if (target === 'operand') {
-      const operand = operator.rightSibling;
+      const operand = operandOf(operator);
       if (operand?.type === 'placeholder') selectPlaceholderAt(model.offsetOf(operand));
-      else mathfield.position = model.offsetOf(operand ?? operator);
+      else if (operand) moveCaretTo(model.offsetOf(branchAtoms(operand, 'body').at(-1)));
+      else mathfield.position = model.offsetOf(operator);
       return;
     }
     const branch = target === 'lower' ? 'subscript' : 'superscript';
@@ -365,6 +367,11 @@
 
   function matrixCommand(name) {
     if (codeFocused() || !mathfield) return false;
+    // Outside a matrix MathLive would turn the line into \displaylines rows.
+    const model = fieldModel();
+    let atom = model && caretAtom(model);
+    while (atom && atom.type !== 'array') atom = atom.parent;
+    if (!atom) return false;
     mathfield.executeCommand(name);
     syncFromField();
     return true;
@@ -764,12 +771,51 @@
    * except the base of a prescript). The caret keeps its place; in an empty slot it selects the
    * new placeholder. Returns true if anything changed.
    */
+  /**
+   * The operand of ∑ or ∫ (MathLive's extensible symbols) is a braced group, as in classic editors (\sum_{}^{}{}), so it keeps its
+   * extent once filled. MathLive reduces a group holding only a placeholder to the bare placeholder;
+   * this puts such an operand back into a group. Returns true if anything changed.
+   */
+  function groupOperands(field = mathfield) {
+    const model = fieldModel(field);
+    const Placeholder = placeholderClass();
+    if (!model || !Placeholder || restoringPlaceholders) return false;
+    const bare = model.atoms.filter(atom => atom.type === 'placeholder' && atom.leftSibling?.type === 'extensible-symbol');
+    if (!bare.length) return false;
+    const [start, end] = model.selection.ranges[0];
+    const selected = field === mathfield && model.selectionIsPlaceholder ? model.at(Math.max(start, end)) : null;
+    let select = null;
+    for (const placeholder of bare) {
+      scratchField.setValue('{x}', { silenceNotifications: true });
+      const scratch = fieldModel(scratchField);
+      const group = scratch?.root.body.find(atom => atom.type === 'group');
+      if (!group) return false;
+      scratch.root.removeChild(group);
+      const content = group.body.find(atom => atom.type !== 'first');
+      const inner = new Placeholder();
+      group.addChildAfter(inner, content);
+      group.removeChild(content);
+      placeholder.parent.addChildAfter(group, placeholder);
+      placeholder.parent.removeChild(placeholder);
+      if (placeholder === selected) select = inner;
+    }
+    restoringPlaceholders = true;
+    try {
+      model.contentDidChange({ inputType: 'insertText' });
+      if (select) selectPlaceholderAt(model.offsetOf(select));
+    } finally {
+      restoringPlaceholders = false;
+    }
+    return true;
+  }
+
   function restorePlaceholders(field = mathfield) {
     const model = fieldModel(field);
     const Placeholder = placeholderClass();
     if (!model || !Placeholder || restoringPlaceholders) return false;
+    const grouped = groupOperands(field);
     const collapsed = model.selectionIsCollapsed;
-    if (field === mathfield && !collapsed) return false;
+    if (field === mathfield && !collapsed) return grouped;
     const anchor = model.at(model.position);
     let anchorPlaceholder = null;
     let changed = false;
@@ -799,7 +845,7 @@
         }
       }
     }
-    if (!changed) return false;
+    if (!changed) return grouped;
     restoringPlaceholders = true;
     try {
       model.contentDidChange({ inputType: 'insertText' });
@@ -875,9 +921,18 @@
   const hasOwnSlots = atom => (atom.branches ?? []).some(branch => !SCRIPT_BRANCHES.includes(branch));
 
   /** An operator's empty operand (the □ after ∑ or ∫) belongs to it. */
+  /**
+   * The operand of ∑ or ∫ belongs to it: as in classic editors it is a braced group, \sum_{}^{}{}
+   * (or, in older documents, an empty slot right after the operator).
+   */
   function operandOf(atom) {
-    return LARGE_OPERATORS.has(atom?.type) && atom.rightSibling?.type === 'placeholder' ? atom.rightSibling : null;
+    const next = atom?.rightSibling;
+    if (next?.type === 'placeholder') return LARGE_OPERATORS.has(atom?.type) ? next : null;
+    return next?.type === 'group' && atom?.type === 'extensible-symbol' ? next : null; // ∑, ∫ (not \lim, \sin).
   }
+
+  /** The operator whose braced operand `group` is, if it is one. */
+  const operatorOf = group => (group?.type === 'group' && operandOf(group.leftSibling) === group ? group.leftSibling : null);
 
   function atomRange(model, atom) {
     return [model.offsetOf(atom) - (atom.children?.length ?? 0) - 1, model.offsetOf(operandOf(atom) ?? atom)];
@@ -939,14 +994,14 @@
     // At the start of a filled slot: select the structure (a second Backspace deletes it).
     if (model.selectionIsCollapsed && atom?.type === 'first' && atom.parent && !atom.parent.isRoot &&
         !isSlotEmpty(atom.parent, atom.parentBranch)) {
-      mathfield.selection = { ranges: [atomRange(model, atom.parent)] };
+      mathfield.selection = { ranges: [atomRange(model, operatorOf(atom.parent) ?? atom.parent)] };
       return true;
     }
 
     // In an empty slot.
     if (atom && ['first', 'placeholder'].includes(atom.type) && atom.parent && !atom.parent.isRoot &&
         isSlotEmpty(atom.parent, atom.parentBranch)) {
-      const owner = atom.parent;
+      const owner = operatorOf(atom.parent) ?? atom.parent;
       const range = atomRange(model, owner);
       mathfield.selection = { ranges: [range] };
       if (SCRIPT_BRANCHES.includes(atom.parentBranch) && !LARGE_OPERATORS.has(owner.type) && !hasOwnSlots(owner)) {
@@ -961,6 +1016,7 @@
     if (!model.selectionIsCollapsed) return false;
     let before = model.at(model.position);
     if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
+    before = operatorOf(before) ?? before;
     if (!isStructure(before)) return false;
     if (!isScripts(before) && !hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
       // A symbol carrying its scripts itself: step into the last script.
@@ -1007,7 +1063,8 @@
       const order = slotOrder(owner);
       const following = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
       if (following !== undefined) enterSlot(owner, following, false);
-      else if (operandOf(owner)) selectPlaceholderAt(model.offsetOf(operandOf(owner))); // From the limits into the operand.
+      else if (operandOf(owner)?.type === 'group') enterSlot(operandOf(owner), 'body', false); // From the limits into the operand.
+      else if (operandOf(owner)) selectPlaceholderAt(model.offsetOf(operandOf(owner)));
       else mathfield.position = model.offsetOf(owner);
       return true;
     }
@@ -1023,6 +1080,7 @@
     const order = slotOrder(owner);
     const preceding = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
     if (preceding !== undefined) enterSlot(owner, preceding, true);
+    else if (operatorOf(owner)) enterSlot(operatorOf(owner), slotOrder(operatorOf(owner)).at(-1), true); // Operand → upper limit.
     else mathfield.position = model.offsetOf(owner.leftSibling);
     return true;
   }
@@ -1051,10 +1109,17 @@
     }
     const order = slotOrder(owner);
     const target = order[order.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
+    const operand = operandOf(owner)?.type === 'group' ? operandOf(owner) : null;
+    const operator = operatorOf(owner);
     if (target !== undefined) {
       moveCaretTo(model.offsetOf(branchAtoms(owner, target).at(-1)));
+    } else if (direction > 0 && operand) {
+      moveCaretTo(model.offsetOf(branchAtoms(operand, 'body').at(-1))); // Limits → operand.
+    } else if (direction < 0 && operator) {
+      moveCaretTo(model.offsetOf(branchAtoms(operator, slotOrder(operator).at(-1)).at(-1))); // Operand → upper limit.
     } else {
-      mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(owner.leftSibling);
+      const outer = operator ?? owner;
+      mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(outer.leftSibling);
     }
     return true;
   }
