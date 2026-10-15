@@ -5,6 +5,7 @@
 #   ./install.sh              install, building first if needed
 #   ./install.sh --open       install, then launch the app
 #   ./install.sh --uninstall  remove the app from /Applications
+#   ./install.sh --app PATH   install that build (build.sh --install passes its own)
 #
 set -euo pipefail
 
@@ -16,14 +17,17 @@ readonly LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Framework
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 open_after=false
 uninstall=false
+given_app=""
 
-for arg in "$@"; do
-  case "$arg" in
+while (( $# > 0 )); do
+  case "$1" in
     --open) open_after=true ;;
     --uninstall) uninstall=true ;;
-    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "Unknown option: $arg (see --help)" >&2; exit 2 ;;
+    --app) shift; given_app="${1:-}"; [[ -n "$given_app" ]] || { echo "--app needs a path" >&2; exit 2; } ;;
+    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
+  shift
 done
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -63,7 +67,7 @@ fi
 
 # Prefer a build in the current directory (where build.sh writes), then one next to this script.
 source_app=""
-for candidate in "$PWD/$APP_NAME.app" "$ROOT/$APP_NAME.app"; do
+for candidate in ${given_app:+"$given_app"} "$PWD/$APP_NAME.app" "$ROOT/$APP_NAME.app"; do
   if [[ -x "$candidate/Contents/MacOS/$EXECUTABLE" ]]; then source_app="$candidate"; break; fi
 done
 

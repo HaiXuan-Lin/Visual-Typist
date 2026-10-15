@@ -25,4 +25,7 @@ const version = name => require(`./node_modules/${name}/package.json`).version;
 fs.writeFileSync(process.argv[1], JSON.stringify({ mathlive: version("mathlive"), mathjax: version("mathjax-full") }, null, 2) + "\n");
 ' "$WEB/versions.json"
 
+# Checksums of the bundled files, so that build.sh can tell a damaged or incomplete copy.
+(cd "$WEB" && find mathlive mathjax -type f | LC_ALL=C sort | xargs shasum -a 256) >"$WEB/checksums.sha256"
+
 echo "Math engines updated in $WEB"
