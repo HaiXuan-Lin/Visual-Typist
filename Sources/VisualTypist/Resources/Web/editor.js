@@ -813,6 +813,10 @@
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
     .vt-slot-selected .ML__selection { display: none !important; }
     .vt-match { background: var(--bracket-match); border-radius: 2px; }
+    /* A selection with scripts is drawn by us (see drawScriptSelection), MathLive's being too large. */
+    .vt-own-selection .ML__selection { display: none !important; }
+    .ML__content { position: relative; isolation: isolate; }
+    .vt-selection { position: absolute; pointer-events: none; background: var(--selection-background-color); z-index: -1; }
     /* After ⌘A every line shows its selection, also the lines without focus. */
     .vt-all-selected .ML__selection { background: var(--selection-background-color) !important; }
     /* A caret inside the slot that has it, at the block's left edge. */
@@ -823,6 +827,53 @@
     }
     @keyframes vt-caret-blink { 50% { opacity: 0; } }
   `;
+
+  /**
+   * MathLive draws a selection as boxes around its elements' frames; consecutive scripts share one
+   * frame, so a selected a_{}^{} followed by more scripts looked as wide and tall as all of them.
+   * When a selection holds scripts, each selected element is drawn instead as the union of the
+   * glyphs and slots it is made of.
+   */
+  function drawScriptSelection(field) {
+    const container = field.shadowRoot?.querySelector('.ML__container');
+    const content = field.shadowRoot?.querySelector('.ML__content');
+    if (!container || !content) return;
+    for (const old of content.querySelectorAll('.vt-selection')) old.remove();
+    const model = fieldModel(field);
+    const shown = model && !model.selectionIsCollapsed && !model.selectionIsPlaceholder &&
+      (field.hasFocus() || container.classList.contains('vt-all-selected'));
+    const [start, end] = shown ? [...model.selection.ranges[0]].sort((a, b) => a - b) : [0, 0];
+    const first = shown ? model.at(start + 1) : null;
+    const last = shown ? model.at(end) : null;
+    const selected = [];
+    if (first && last && first.parent === last.parent) {
+      for (let atom = first; atom; atom = atom.rightSibling) {
+        selected.push(atom);
+        if (atom === last) break;
+      }
+    }
+    const own = selected.some(isScripts);
+    if (container.classList.contains('vt-own-selection') !== own) container.classList.toggle('vt-own-selection', own);
+    if (!own) return;
+    const origin = content.getBoundingClientRect();
+    for (const atom of selected) {
+      let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const part of [atom, ...(atom.children ?? [])]) {
+        if (part.type === 'first' || !part.id) continue;
+        for (const element of content.querySelectorAll(`[data-atom-id="${part.id}"]`)) {
+          const box = element.getBoundingClientRect();
+          if (!box.width || !box.height) continue;
+          left = Math.min(left, box.left); top = Math.min(top, box.top);
+          right = Math.max(right, box.right); bottom = Math.max(bottom, box.bottom);
+        }
+      }
+      if (left === Infinity) continue;
+      const mark = document.createElement('span');
+      mark.className = 'vt-selection';
+      mark.style.cssText = `left:${left - origin.left}px;top:${top - origin.top}px;width:${right - left}px;height:${bottom - top}px`;
+      content.append(mark);
+    }
+  }
 
   /** Marks MathLive's placeholder glyphs (▢) so the stylesheet above can repaint them. */
   function tagSlots(field) {
@@ -872,7 +923,15 @@
       const style = document.createElement('style');
       style.textContent = FIELD_CSS;
       field.shadowRoot.append(style);
-      new MutationObserver(() => { tagSlots(field); markFences(field); })
+      new MutationObserver(records => {
+        tagSlots(field);
+        markFences(field);
+        // Not again for our own selection boxes (they are added to the content).
+        if (records.some(record => ![...record.addedNodes, ...record.removedNodes].every(node => node.classList?.contains('vt-selection')) ||
+            (record.type === 'attributes' && !record.target.classList?.contains('vt-selection')))) {
+          drawScriptSelection(field);
+        }
+      })
         .observe(field.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
       styleField(field);
     }
@@ -2431,7 +2490,8 @@
     const candidates = [here, here?.rightSibling];
     if (here?.parent?.type === 'leftright' && (here.type === 'first' || !here.rightSibling)) candidates.push(here.parent);
     for (const atom of candidates) {
-      const index = fences.findIndex(fence => fence.atom === atom || fence.close === atom);
+      if (!atom) continue; // At the end of a row there is nothing on the right.
+      const index = fences.findIndex(fence => fence.atom === atom || (fence.close && fence.close === atom));
       if (index >= 0) return index;
     }
     return -1;
