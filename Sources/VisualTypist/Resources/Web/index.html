@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; script-src 'self' file: 'unsafe-eval'; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'">
   <title>Visual Typist</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="vendor/mathlive/mathlive-fonts.css">
   <link rel="stylesheet" href="app.css">
   <script defer src="mathjax-config.js"></script>
@@ -44,6 +45,9 @@
         <button data-action="copyLatex" class="text" title="Copy LaTeX (⌘T)">TeX</button>
         <button data-action="copyImage" title="Copy as Image (⌘C)"><svg viewBox="0 0 20 20"><path d="M6.5 6.5h10v10h-10z M13.5 6.5v-3h-10v10h3"/></svg></button>
         <button id="export-button" title="Export"><svg viewBox="0 0 20 20"><path d="M10 12.5V2.5 M6.5 6 10 2.5 13.5 6 M4.5 9.5v8h11v-8"/></svg></button>
+      </div>
+      <div class="group">
+        <button data-command="toggleTheme" title="Light / Dark Theme"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
       </div>
       <div class="spacer"></div>
       <div class="segmented" role="tablist" aria-label="Bottom pane">

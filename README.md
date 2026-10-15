@@ -16,9 +16,10 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   bracket…) deletes it whole, contents and all; after scripts it deletes just the scripts and
   keeps their base. ⌫ in an empty slot, or at the start of a filled one, selects the structure,
   and a second ⌫ deletes it.
-- **Staggered indices:** a script added after a symbol that already has one scripts the whole
-  thing — `a`, `⌘Q` `1`, `→`, `⌘L` `2` gives `{a^{1}}_{2}`, so tensor indices sit apart
-  (`T^{ab}{}_{c}`). Typed `^` and `_` work the same way.
+- **Staggered indices:** as in classic editors each script is an element of its own after its
+  base, so a script added after scripts follows them — `a`, `⌘Q` `1`, `→`, `⌘L` `2` is written
+  `{a^{1}}_{2}`, and tensor indices sit apart (`T^{ab}{}_{c}`). → enters a script's subscript, ←
+  its superscript; the mouse selects whole elements (`a` with its first scripts, say).
 - **Templates and accents behave like a classic editor's buttons:** an accent (`⌘H` hat, `⌘D` dot,
   `⌥T` vector…) applies to the symbol before the caret or to the selection; a template takes the
   selection into its first slot and puts the caret in the next one (a selected expression
@@ -34,6 +35,7 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   `↩` keeps the command as typed, `⎋` cancels, `,` `.` page through. Works in the LaTeX pane too.
 - **Shortcuts for everything.** Right-click any palette button to give it a shortcut, or edit
   them all in *Settings › Keyboard Shortcuts* (`⌘,`).
+- **Light or dark:** follows the system until the toolbar's theme button picks one.
 - **Vector export** (PDF, SVG), PNG at 1×–4×, standalone LaTeX, MathML; copy as image or LaTeX.
 - Runs fully offline. Native Apple Silicon app for macOS 14 or later.
 

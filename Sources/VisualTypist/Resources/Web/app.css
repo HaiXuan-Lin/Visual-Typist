@@ -1,5 +1,6 @@
+/* data-theme is "light" or "dark": the system's theme, or the one the toolbar's theme button chose. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --page: #ffffff;
   --chrome: #ececee;
   --chrome-border: #d3d3d8;
@@ -26,28 +27,27 @@
   font: 13px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --page: #1f1f22;
-    --chrome: #2c2c30;
-    --chrome-border: #3f3f45;
-    --pane: #262629;
-    --text: #ececf0;
-    --secondary: #a0a0aa;
-    --accent: #4b9bff;
-    --danger: #ff8a85;
-    --button-hover: #ffffff14;
-    --button-active: #ffffff24;
-    --tile-border: #ffffff12;
-    --tint-blue: #2b3846;
-    --tint-rose: #3d2f38;
-    --tint-green: #2f3a2c;
-    --tint-violet: #34314a;
-    --tint-amber: #3e3627;
-    --vt-slot: #2a4865;
-    --vt-slot-active: #3b6d99;
-    --line-rule: #3c3e4e;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #1f1f22;
+  --chrome: #2c2c30;
+  --chrome-border: #3f3f45;
+  --pane: #262629;
+  --text: #ececf0;
+  --secondary: #a0a0aa;
+  --accent: #4b9bff;
+  --danger: #ff8a85;
+  --button-hover: #ffffff14;
+  --button-active: #ffffff24;
+  --tile-border: #ffffff12;
+  --tint-blue: #2b3846;
+  --tint-rose: #3d2f38;
+  --tint-green: #2f3a2c;
+  --tint-violet: #34314a;
+  --tint-amber: #3e3627;
+  --vt-slot: #2a4865;
+  --vt-slot-active: #3b6d99;
+  --line-rule: #3c3e4e;
 }
 
 * { box-sizing: border-box; }
@@ -76,9 +76,7 @@ math-field {
 }
 math-field::part(menu-toggle), math-field::part(virtual-keyboard-toggle) { display: none; }
 math-field::part(container) { padding: 0; }
-@media (prefers-color-scheme: dark) {
-  math-field { --selection-background-color: #2d5a8c; }
-}
+:root[data-theme="dark"] math-field { --selection-background-color: #2d5a8c; }
 #greek-indicator {
   position: absolute; top: 10px; right: 14px; padding: 2px 8px; border-radius: 10px;
   background: var(--accent); color: white; font-size: 11px; font-weight: 600; pointer-events: none;
@@ -154,7 +152,7 @@ math-field::part(container) { padding: 0; }
 .group .tile:first-child { border-top-left-radius: 6px; }
 .tile:hover { filter: brightness(.95); }
 .tile:active { filter: brightness(.88); }
-@media (prefers-color-scheme: dark) { .tile:hover { filter: brightness(1.2); } .tile:active { filter: brightness(1.35); } }
+:root[data-theme="dark"] .tile:hover { filter: brightness(1.2); } :root[data-theme="dark"] .tile:active { filter: brightness(1.35); }
 .tile svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
 /* Integrals, large operators, matrices: tiles two rows tall and half again as wide, display style. */
 .group.large {
@@ -203,11 +201,9 @@ math-field::part(container) { padding: 0; }
 .cand.current .cand-label { background: #8d5c1f; }
 .cand.current .cand-glyph, .cand:hover .cand-glyph { background: #e7d1d9; }
 .cand-more { display: flex; align-items: center; padding: 0 7px; background: #6b4518; color: #fff; font-size: 12px; }
-@media (prefers-color-scheme: dark) {
-  .cand-preedit { color: #6ea8ff; }
-  .cand-glyph { background: #3a2f36; color: #ececf0; }
-  .cand.current .cand-glyph, .cand:hover .cand-glyph { background: #4a3a44; }
-}
+:root[data-theme="dark"] .cand-preedit { color: #6ea8ff; }
+:root[data-theme="dark"] .cand-glyph { background: #3a2f36; color: #ececf0; }
+:root[data-theme="dark"] .cand.current .cand-glyph, :root[data-theme="dark"] .cand:hover .cand-glyph { background: #4a3a44; }
 
 /* Popovers */
 .popover {

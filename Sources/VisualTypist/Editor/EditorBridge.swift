@@ -48,12 +48,17 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         contentController.addUserScript(WKUserScript(
             source: "window.VT_USER_SHORTCUTS = \(shortcuts.overridesJSON());",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // So is the theme chosen with the toolbar's theme button (none: follow the system).
+        let theme = Theme.chosen.map { "\"\($0)\"" } ?? "null"
+        contentController.addUserScript(WKUserScript(
+            source: "window.VT_THEME = \(theme);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = contentController
         webView = EditorWebView(frame: .zero, configuration: configuration)
         self.shortcuts = shortcuts
         super.init()
 
         contentController.add(WeakMessageHandler(self), name: "vt")
+        Theme.applyAppearance()
         webView.navigationDelegate = self
         webView.onShortcut = { [weak self] combo, done in
             guard let self else { return done() }
@@ -62,6 +67,13 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                     self.onError?(error.localizedDescription)
                 }
                 done()
+            }
+        }
+        // Every open window shows the theme chosen in any of them.
+        NotificationCenter.default.addObserver(forName: Theme.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let mode = Theme.chosen else { return }
+                self.evaluate("window.vt.setTheme(mode)", ["mode": mode])
             }
         }
         // Keep every open window's shortcuts in sync with edits made in any of them.
@@ -99,6 +111,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             webView.restrictsToRomanInput = body["math"] as? Bool ?? false
         case "recording":
             webView.isRecordingShortcut = body["active"] as? Bool ?? false
+        case "theme":
+            if let mode = body["mode"] as? String { Theme.choose(mode) }
         case "saveShortcuts":
             shortcuts.save(overrides: body["overrides"] as? [String: Any] ?? [:])
         case "action":
@@ -317,5 +331,29 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: EditorBridge) { self.target = target }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(controller, didReceive: message)
+    }
+}
+
+/// The light or dark theme chosen with the toolbar's theme button; until then the system's applies.
+@MainActor
+enum Theme {
+    static let didChange = Notification.Name("VisualTypistThemeDidChange")
+    private static let key = "theme"
+
+    static var chosen: String? {
+        let mode = UserDefaults.standard.string(forKey: key)
+        return mode == "light" || mode == "dark" ? mode : nil
+    }
+
+    static func choose(_ mode: String) {
+        guard mode == "light" || mode == "dark", mode != chosen else { return applyAppearance() }
+        UserDefaults.standard.set(mode, forKey: key)
+        applyAppearance()
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
+    /// The windows' title bars and controls follow the chosen theme too.
+    static func applyAppearance() {
+        NSApp.appearance = chosen.map { NSAppearance(named: $0 == "dark" ? .darkAqua : .aqua) } ?? nil
     }
 }

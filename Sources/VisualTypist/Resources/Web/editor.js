@@ -161,7 +161,7 @@
   }
 
   // Commands that act on a ⌘A selection themselves; any other command ends it first.
-  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
+  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
     'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur']);
 
   function runShortcut(combo) {
@@ -189,14 +189,8 @@
     const model = fieldModel();
     const anchor = model && caretAtom(model);
     if (/^[_^]/.test(latex) && (model?.selectionIsPlaceholder || anchor?.type === 'first')) latex = `{}${latex}`;
-    // A script after a symbol that already has scripts takes the whole scripted symbol as its base,
-    // as classic editors do: ⌘Q 1 → ⌘L 2 gives {a^{1}}_{2}, so tensor indices stay staggered.
-    else if (/^[_^']/.test(latex) && model?.selectionIsCollapsed && isScripts(anchor)) { // ' is a superscript too.
-      const range = scriptedRange(model, anchor);
-      // #0 would take the selection again; the new script starts empty.
-      latex = `{${mathfield.getValue(range[0], range[1], 'latex')}}${latex.replace('#0', '#?')}`;
-      mathfield.selection = { ranges: [range] };
-    }
+    // A script after scripts is a script node of its own (⌘Q 1 → ⌘L 2), as in classic editors;
+    // it is written {a^{1}}_{2}, so tensor indices stay staggered (see scripts/patches).
     mathfield.insert(latex, {
       format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', focus: true, feedback: false,
     });
@@ -478,6 +472,7 @@
     cursorRight: () => moveCaret('right'),
     lineStart: () => moveCaret('lineStart'),
     lineEnd: () => moveCaret('lineEnd'),
+    toggleTheme: () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', { save: true }),
     undo: () => stepHistory(-1),
     redo: () => stepHistory(1),
   };
@@ -496,8 +491,16 @@
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
     selectAll: 'Select all', deleteLine: 'Delete the line',
     cursorUp: 'Move up', cursorDown: 'Move down', cursorLeft: 'Move left', cursorRight: 'Move right',
-    lineStart: 'Move to start of line', lineEnd: 'Move to end of line',
+    lineStart: 'Move to start of line', lineEnd: 'Move to end of line', toggleTheme: 'Light / dark theme',
   };
+
+  /** Shows the light or dark theme (theme.js applies it); `save` keeps the choice in the app. */
+  function setTheme(mode, { save = false } = {}) {
+    window.VT_THEME = mode;
+    window.VT_APPLY_THEME?.();
+    if (save) post('theme', { mode });
+    return true;
+  }
 
   function selectAll() {
     if (codeFocused()) { codeArea.select(); return true; }
@@ -778,6 +781,7 @@
         if (composing?.mode === 'math' || field !== mathfield || restoringPlaceholders) return;
         if (restorePlaceholders()) syncFromField();
         selectAdjacentPlaceholder();
+        selectWholeAtoms();
       });
       field.addEventListener('focusin', () => { mathfield = field; });
     }
@@ -998,11 +1002,38 @@
     return true;
   }
 
+  /**
+   * {a_{1}^{2}}_{3}: a group holding a scripted base, followed by scripts. As in classic editors the
+   * row is flat — a, its scripts, the next scripts — so the group's contents take its place.
+   */
+  function flattenScriptGroups(field) {
+    const model = fieldModel(field);
+    const groups = model.atoms.filter(atom => atom.type === 'group' && isScripts(atom.rightSibling) &&
+      isScripts(branchAtoms(atom, 'body').at(-1)) && !(atom.branches ?? []).some(branch => SCRIPT_BRANCHES.includes(branch)));
+    if (!groups.length) return false;
+    for (const group of groups) {
+      let previous = group;
+      for (const child of branchAtoms(group, 'body').filter(atom => atom.type !== 'first')) {
+        group.removeChild(child);
+        group.parent.addChildAfter(child, previous);
+        previous = child;
+      }
+      group.parent.removeChild(group);
+    }
+    restoringPlaceholders = true;
+    try {
+      model.contentDidChange({ inputType: 'insertText' });
+    } finally {
+      restoringPlaceholders = false;
+    }
+    return true;
+  }
+
   function restorePlaceholders(field = mathfield) {
     const model = fieldModel(field);
     const Placeholder = placeholderClass();
     if (!model || !Placeholder || restoringPlaceholders) return false;
-    const grouped = groupOperands(field);
+    const grouped = flattenScriptGroups(field) | groupOperands(field);
     const collapsed = model.selectionIsCollapsed;
     if (field === mathfield && !collapsed) return grouped;
     const anchor = model.at(model.position);
@@ -1048,6 +1079,38 @@
     return true;
   }
 
+  /**
+   * A selection is made of whole elements of one row, as in classic editors: when its ends lie at
+   * different depths (dragged from a letter into a script, say), both ends widen to the elements of
+   * the row that contains them both.
+   */
+  function selectWholeAtoms() {
+    const model = fieldModel();
+    if (!model || model.selectionIsCollapsed || model.selectionIsPlaceholder) return;
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    const first = model.at(start + 1);
+    const last = model.at(end);
+    if (!first || !last || (first.parent === last.parent && sameBranch(first.parentBranch, last.parentBranch))) return;
+    const ancestors = atom => { const chain = []; for (let node = atom; node; node = node.parent) chain.push(node); return chain; };
+    const lastChain = ancestors(last);
+    // The innermost row holding both: climb from the first end until a node is also above the last end.
+    let row = null;
+    let rowBranch = null;
+    for (let node = first; node?.parent; node = node.parent) {
+      if (lastChain.includes(node.parent)) {
+        const sibling = lastChain.find(other => other.parent === node.parent);
+        if (sibling && sameBranch(sibling.parentBranch, node.parentBranch)) { row = node.parent; rowBranch = node.parentBranch; break; }
+      }
+    }
+    if (!row) return;
+    const inRow = atom => ancestors(atom).find(node => node.parent === row && sameBranch(node.parentBranch, rowBranch));
+    const from = inRow(first);
+    const to = inRow(last);
+    if (!from || !to) return;
+    const range = [atomRange(model, from)[0], model.offsetOf(to)];
+    if (range[0] !== start || range[1] !== end) mathfield.selection = { ranges: [range] };
+  }
+
   /** A caret just before or after an empty slot's placeholder selects it (the slot is one unit). */
   function selectAdjacentPlaceholder() {
     const model = fieldModel();
@@ -1073,6 +1136,8 @@
   /** The slots of a structure in navigation order: an operator's lower limit comes before its upper one. */
   function slotOrder(atom) {
     const branches = atom?.branches ?? [];
+    // Scripts: → enters the subscript, ← the superscript (the first and last slot here).
+    if (isScripts(atom)) return ['subscript', 'superscript'].filter(branch => branches.includes(branch));
     if (!LARGE_OPERATORS.has(atom.type)) return branches;
     const rank = branch => ({ subscript: 0, superscript: 1 })[branch] ?? 2;
     return [...branches].sort((a, b) => rank(a) - rank(b));
@@ -1081,15 +1146,6 @@
   const isStructure = atom => !!atom && atom.type !== 'first' && (atom.branches?.length ?? 0) > 0;
   /** Scripts that MathLive keeps as their own atom after the base (x then ^{2}). */
   const isScripts = atom => atom?.type === 'subsup';
-
-  /** The range of the base before `scripts` together with all its scripts. */
-  function scriptedRange(model, scripts) {
-    let first = scripts;
-    while (isScripts(first.leftSibling)) first = first.leftSibling;
-    const base = first.leftSibling;
-    const start = base && base.type !== 'first' ? atomRange(model, base)[0] : atomRange(model, first)[0];
-    return [start, model.offsetOf(scripts)];
-  }
 
   /** Deletes the structure `atom` (scripts only: the base stays), leaving the caret where it was. */
   function deleteStructure(model, atom) {
@@ -1239,7 +1295,7 @@
       const owner = here.parent;
       if (!owner || owner.isRoot) return moveToLine(lineIndex + 1, 0, 'start') || true;
       const order = slotOrder(owner);
-      // From either script → leaves the scripts, as in classic editors (↓ / ↑ go between them).
+      // Leaving either script → (or ←) leaves the scripts, as in classic editors (↓ / ↑ go between them).
       const following = isScripts(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
       if (following !== undefined) enterSlot(owner, following, false);
       else if (operandOf(owner)?.type === 'group') enterSlot(operandOf(owner), 'body', false); // From the limits into the operand.
@@ -1257,7 +1313,7 @@
     const owner = here.parent;
     if (!owner || owner.isRoot) return moveToLine(lineIndex - 1, 0, 'end') || true;
     const order = slotOrder(owner);
-    const preceding = order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
+    const preceding = isScripts(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
     if (preceding !== undefined) enterSlot(owner, preceding, true);
     else if (operatorOf(owner)) enterSlot(operatorOf(owner), slotOrder(operatorOf(owner)).at(-1), true); // Operand → upper limit.
     else mathfield.position = model.offsetOf(owner.leftSibling);
@@ -2075,7 +2131,7 @@
     } else {
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
-    const color = matchMedia('(prefers-color-scheme: dark)').matches ? '#6ea8ff' : '#2f6fe4';
+    const color = document.documentElement.dataset.theme === 'dark' ? '#6ea8ff' : '#2f6fe4';
     const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
     mathfield.insert(`\\textcolor{${color}}{${raw}}`,
       { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
@@ -2657,6 +2713,7 @@
       return COMMANDS[name]();
     },
     runShortcut(combo) { return runShortcut(combo); },
+    setTheme: mode => setTheme(mode),
     selectionLatex,
     setShortcutOverrides(raw) { overrides = sanitizeOverrides(raw); rebuildKeymap(); },
     toast,
