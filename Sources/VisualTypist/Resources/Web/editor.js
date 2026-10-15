@@ -2616,7 +2616,12 @@
       return;
     }
     setSpan(drag.anchor, { line: lines.indexOf(target), offset: offsetAtX(target, event.clientX) });
-    requestAnimationFrame(() => paintSpan()); // MathLive goes on extending the selection in the line it captured.
+    // While it has the drag, MathLive doesn't redraw the selection of the line it captured the drag
+    // in: every frame of the drag draws the spanning selection anew.
+    if (!drag.painting) {
+      drag.painting = true;
+      requestAnimationFrame(() => { if (drag) drag.painting = false; paintSpan({ redraw: true }); });
+    }
   }, true);
   document.addEventListener('pointerup', () => {
     if (drag && allSelected) requestAnimationFrame(() => paintSpan({ redraw: true }));
