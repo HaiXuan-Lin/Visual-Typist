@@ -62,8 +62,12 @@
         <div id="strip" aria-label="Symbols"></div>
       </div>
       <div id="code-pane" hidden>
-        <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"
-          aria-label="LaTeX code" placeholder="Type LaTeX here, one line per equation line. It updates as you type; ⇧↩ returns to the equation."></textarea>
+        <div id="code-wrap">
+          <!-- The same text behind the field, to highlight matching brackets (a textarea can't). -->
+          <pre id="code-mirror" aria-hidden="true"></pre>
+          <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"
+            aria-label="LaTeX code" placeholder="Type LaTeX here, one line per equation line. It updates as you type; ⇧↩ returns to the equation."></textarea>
+        </div>
         <div id="code-status" role="status"></div>
       </div>
     </section>

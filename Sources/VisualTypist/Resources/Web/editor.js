@@ -531,7 +531,7 @@
     span = {
       from: { line: first.line, offset: topLevelOffset(lines[first.line], first.offset, false) },
       to: { line: last.line, offset: topLevelOffset(lines[last.line], last.offset, true) },
-      all,
+      anchor, focus, all,
     };
     allSelected = true;
     paintSpan();
@@ -590,6 +590,68 @@
     focusNow(field);
     mathfield = field;
     field.position = Math.min(offset, field.lastOffset);
+  }
+
+  /** A position {line, offset} at the top level of its line: the start or end of the element it is in. */
+  function topLevelPosition(field, toEnd) {
+    const model = fieldModel(field);
+    const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+    return { line: lines.indexOf(field), offset: topLevelOffset(field, toEnd ? end : start, toEnd) };
+  }
+
+  /** The caret's horizontal position in a line, for moving to the line above or below. */
+  function caretX(field, offset) {
+    const model = fieldModel(field);
+    const atom = model.at(offset);
+    const box = atom && field._mathfield.getHTMLElement?.(atom)?.getBoundingClientRect();
+    return box ? (atom.type === 'first' ? box.left : box.right) : field.getBoundingClientRect().left;
+  }
+
+  /**
+   * ⇧ with an arrow across lines: the selection's moving end goes one top-level element left or
+   * right (on to the line before or after at a line's edge), or to the line above or below.
+   * Returns true if the key was used.
+   */
+  function extendAcrossLines(key) {
+    const model = fieldModel();
+    if (!model || composing) return false;
+    let anchor;
+    let focus;
+    if (allSelected) {
+      ({ anchor, focus } = span);
+    } else {
+      // Only from a line's edge (or vertically, at the top level) does a selection leave its line.
+      const atTop = model.at(model.position)?.parent === model.root;
+      const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+      const index = lines.indexOf(mathfield);
+      const leaves = (key === 'right' && end === mathfield.lastOffset && index < lines.length - 1) ||
+        (key === 'left' && start === 0 && index > 0) ||
+        (atTop && key === 'down' && index < lines.length - 1) || (atTop && key === 'up' && index > 0);
+      if (!leaves) return false;
+      const forward = key === 'right' || key === 'down';
+      anchor = topLevelPosition(mathfield, !forward);
+      focus = topLevelPosition(mathfield, forward);
+    }
+    const field = lines[focus.line];
+    const fieldModel_ = fieldModel(field);
+    let next = { ...focus };
+    if (key === 'left' || key === 'right') {
+      const atom = key === 'right' ? fieldModel_.at(focus.offset)?.rightSibling ?? null : fieldModel_.at(focus.offset);
+      if (key === 'right' && atom) next.offset = fieldModel_.offsetOf(atom);
+      else if (key === 'left' && atom && atom.type !== 'first') next.offset = atomRange(fieldModel_, atom)[0];
+      else if (key === 'right' && focus.line < lines.length - 1) next = { line: focus.line + 1, offset: 0 };
+      else if (key === 'left' && focus.line > 0) next = { line: focus.line - 1, offset: lines[focus.line - 1].lastOffset };
+    } else {
+      const target = focus.line + (key === 'down' ? 1 : -1);
+      if (target >= 0 && target < lines.length) next = { line: target, offset: offsetAtX(lines[target], caretX(field, focus.offset)) };
+    }
+    if (next.line === anchor.line && next.offset === anchor.offset) {
+      setAllSelected(false, null);
+      focusAt(next.line, next.offset);
+      return true;
+    }
+    setSpan(anchor, next);
+    return true;
   }
 
   /** The LaTeX of the selection across lines. */
@@ -734,6 +796,9 @@
     'sinh', 'cosh', 'tanh', 'coth', 'ln', 'lg', 'log', 'exp', 'lim', 'liminf', 'limsup', 'max', 'min', 'sup', 'inf',
     'det', 'dim', 'ker', 'deg', 'gcd', 'arg', 'hom', 'Pr']);
   const INLINE_SHORTCUTS = Object.fromEntries([...FUNCTION_NAMES].map(name => [name, `\\${name}`]));
+  const ACCENTS = new Set(['hat', 'check', 'tilde', 'bar', 'vec', 'dot', 'ddot', 'dddot', 'acute', 'grave', 'breve',
+    'mathring', 'widehat', 'widetilde', 'overline', 'underline', 'overrightarrow', 'overleftarrow',
+    'overleftrightarrow', 'underrightarrow', 'underleftarrow']);
   const LINE_BREAK = '\n\\\\\n'; // Between the lines of the document, as classic editors write it.
   const SLOT = { width: 0.42, height: 0.69 }; // An empty slot's block, in em (see sizeSlots).
   const FIELD_CSS = `
@@ -747,6 +812,7 @@
     }
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
     .vt-slot-selected .ML__selection { display: none !important; }
+    .vt-match { background: var(--bracket-match); border-radius: 2px; }
     /* After ⌘A every line shows its selection, also the lines without focus. */
     .vt-all-selected .ML__selection { background: var(--selection-background-color) !important; }
     /* A caret inside the slot that has it, at the block's left edge. */
@@ -786,6 +852,7 @@
         // While a selection spans lines, MathLive may still move the selection of the line it captured
         // the drag in (above the line, its hit test can fall back on the anchor and collapse it):
         // the spanning selection is shown again once MathLive is done.
+        requestAnimationFrame(updateMatches); // Brackets beside the caret.
         if (allSelected) { requestAnimationFrame(() => { if (allSelected) paintSpan(); }); return; }
         if (composing?.mode === 'math' || field !== mathfield || restoringPlaceholders) return;
         if (restorePlaceholders()) syncFromField();
@@ -805,7 +872,7 @@
       const style = document.createElement('style');
       style.textContent = FIELD_CSS;
       field.shadowRoot.append(style);
-      new MutationObserver(() => tagSlots(field))
+      new MutationObserver(() => { tagSlots(field); markFences(field); })
         .observe(field.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
       styleField(field);
     }
@@ -1261,6 +1328,15 @@
     if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
     before = operatorOf(before) ?? before;
     if (!isStructure(before)) return false;
+    if (ACCENTS.has(before.command?.slice(1))) {
+      // An accent goes and what it was on stays (\hat{V} → V), as in classic editors.
+      const body = branchAtoms(before, 'body');
+      const inner = body.length > 1 ? mathfield.getValue(model.offsetOf(body[0]), model.offsetOf(body.at(-1)), 'latex') : '';
+      mathfield.selection = { ranges: [atomRange(model, before)] };
+      mathfield.insert(inner, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+      syncFromField();
+      return true;
+    }
     if (!isScripts(before) && !hasOwnSlots(before) && !LARGE_OPERATORS.has(before.type)) {
       // A symbol carrying its scripts itself: step into the last script.
       const last = slotOrder(before).at(-1);
@@ -1508,6 +1584,37 @@
     return true;
   }
 
+  const BRACKETS = {
+    '(': ['(', ')'], ')': ['(', ')'], '[': ['[', ']'], ']': ['[', ']'], '{': ['\\{', '\\}'], '}': ['\\{', '\\}'],
+  };
+
+  /** A typed bracket key (see the keydown handler). Returns true if it was used. */
+  function typeBracket(key) {
+    const model = fieldModel();
+    if (!model || allSelected) return false;
+    const [open, close] = BRACKETS[key];
+    if (model.selectionIsCollapsed && [')', ']', '}'].includes(key)) {
+      // At the end of a bracket's contents, the closing bracket steps out of it.
+      const here = model.at(model.position);
+      const bracket = here?.parent;
+      if (bracket?.type === 'leftright' && !here.rightSibling && bracket.rightDelim === close) {
+        mathfield.position = model.offsetOf(bracket);
+        return true;
+      }
+    }
+    if (!model.selectionIsCollapsed && !model.selectionIsPlaceholder) {
+      const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
+      const inner = mathfield.getValue(start, end, 'latex');
+      mathfield.insert(`\\left${open}${inner}\\right${close}`, {
+        format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    } else {
+      mathfield.insert(`\\left${open}#0\\right${close}`, {
+        format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'placeholder', feedback: false });
+    }
+    syncFromField();
+    return true;
+  }
+
   /** Handles the keys whose behavior follows classic equation editors. Returns true if handled. */
   function handleEditingKey(event, key) {
     const model = fieldModel();
@@ -1724,6 +1831,7 @@
       codeArea.value = state.latex;
       scheduleValidation();
       if (focus) codeArea.focus();
+      updateMatches();
     } else {
       if (codeTimer) applyCodeNow();
       if (focus) mathfield?.focus();
@@ -2256,6 +2364,149 @@
     }
   }
 
+  // ---------------------------------------------------------------- matching brackets
+
+  // Beside the caret, a bracket and its partner are highlighted — in the LaTeX code (\left( with
+  // \right), { with }, ( with )) and in the equation — and the same pair in the other pane too.
+  const FENCE_DELIM = String.raw`(?:\\[{}|]|\\[a-zA-Z]+|[()[\]|.<>/])`;
+  const CODE_TOKENS = new RegExp(String.raw`\\(left|middle|right)\s*${FENCE_DELIM}|\\[a-zA-Z]+|\\.|[{}()[\]]`, 'g');
+
+  /** The brackets of LaTeX code, paired: {start, end, kind (fence or brace), open, partner, line, ordinal}. */
+  function codeBrackets(text) {
+    const tokens = [];
+    const stacks = { fence: [], brace: [] };
+    const ordinals = new Map();
+    for (const match of text.matchAll(CODE_TOKENS)) {
+      const word = match[0];
+      let kind;
+      let open;
+      if (match[1] === 'left') [kind, open] = ['fence', true];
+      else if (match[1] === 'right') [kind, open] = ['fence', false];
+      else if (word === '{' || word === '}') [kind, open] = ['brace', word === '{'];
+      else if ('([)]'.includes(word) && word.length === 1) [kind, open] = ['fence', word === '(' || word === '['];
+      else continue;
+      const token = { start: match.index, end: match.index + word.length, kind, open, partner: null };
+      if (open) {
+        stacks[kind].push(token);
+        if (kind === 'fence') {
+          token.line = splitLines(text.slice(0, token.start)).length - 1;
+          token.ordinal = ordinals.get(token.line) ?? 0;
+          ordinals.set(token.line, token.ordinal + 1);
+        }
+      } else {
+        const partner = stacks[kind].pop();
+        if (partner) { partner.partner = token; token.partner = partner; token.line = partner.line; token.ordinal = partner.ordinal; }
+      }
+      tokens.push(token);
+    }
+    return tokens;
+  }
+
+  /** The brackets of a line, in order of their opening: \left…\right atoms and plain ( ) pairs. */
+  function fieldFences(field) {
+    const model = fieldModel(field);
+    if (!model) return [];
+    const fences = [];
+    for (const atom of model.atoms) {
+      if (atom.type === 'leftright') fences.push({ atom, start: atomRange(model, atom)[0] });
+      if (atom.type === 'mopen') {
+        let depth = 0;
+        let close = null;
+        for (let next = atom.rightSibling; next && !close; next = next.rightSibling) {
+          if (next.type === 'mopen') depth += 1;
+          else if (next.type === 'mclose') { if (depth === 0) close = next; else depth -= 1; }
+        }
+        fences.push({ atom, close, start: model.offsetOf(atom) });
+      }
+    }
+    return fences.sort((a, b) => a.start - b.start);
+  }
+
+  /** The bracket pair beside the caret in a line, as an index into fieldFences(), or -1. */
+  function fenceAtCaret(field, fences) {
+    const model = fieldModel(field);
+    if (!model || !(model.selectionIsCollapsed || model.selectionIsPlaceholder)) return -1;
+    const position = model.selectionIsPlaceholder ? Math.max(...model.selection.ranges[0]) : model.position;
+    const here = model.at(position);
+    const candidates = [here, here?.rightSibling];
+    if (here?.parent?.type === 'leftright' && (here.type === 'first' || !here.rightSibling)) candidates.push(here.parent);
+    for (const atom of candidates) {
+      const index = fences.findIndex(fence => fence.atom === atom || fence.close === atom);
+      if (index >= 0) return index;
+    }
+    return -1;
+  }
+
+  let matchedElements = [];
+  let matchedFences = []; // {field, fence}: drawn again whenever MathLive redraws the line.
+  function markFence(field, fence) {
+    if (!fence) return;
+    matchedFences.push({ field, fence });
+    drawFence(field, fence);
+  }
+  const markFences = field => { for (const match of matchedFences) if (match.field === field) drawFence(field, match.fence); };
+  function drawFence(field, fence) {
+    const root = field.shadowRoot;
+    const elements = fence.atom.type === 'leftright'
+      ? [...root.querySelectorAll(`[data-atom-id="${fence.atom.id}"]`)].filter(el => /ML__(open|close)/.test(el.className))
+      : [fence.atom, fence.close].filter(Boolean).map(atom => root.querySelector(`[data-atom-id="${atom.id}"]`)).filter(Boolean);
+    for (const element of elements) if (!element.classList.contains('vt-match')) element.classList.add('vt-match');
+    matchedElements.push(...elements);
+  }
+
+  const codeMirror = $('code-mirror');
+  const escapeHTML = text => text.replace(/[&<>]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[char]);
+  function markCode(tokens) {
+    const text = codeArea.value;
+    let html = '';
+    let at = 0;
+    for (const token of [...tokens].sort((a, b) => a.start - b.start)) {
+      html += escapeHTML(text.slice(at, token.start)) + `<mark>${escapeHTML(text.slice(token.start, token.end))}</mark>`;
+      at = token.end;
+    }
+    codeMirror.innerHTML = html + escapeHTML(text.slice(at)) + (text.endsWith('\n') ? ' ' : '');
+    codeMirror.scrollTop = codeArea.scrollTop;
+  }
+
+  /** Highlights the bracket pair beside the caret (in whichever pane has it) and its counterpart. */
+  function updateMatches() {
+    for (const element of matchedElements) element.classList.remove('vt-match');
+    matchedElements = [];
+    matchedFences = [];
+    const showCode = ui.mode === 'code';
+    const synced = codeArea.value === state.latex;
+    let codeMarks = [];
+    if (codeFocused()) {
+      const caret = codeArea.selectionStart;
+      if (caret !== codeArea.selectionEnd) return showCode && markCode([]);
+      const tokens = codeBrackets(codeArea.value);
+      const token = tokens.find(t => t.end === caret) ?? tokens.find(t => t.start === caret);
+      if (token?.partner) {
+        codeMarks = [token, token.partner];
+        const open = token.open ? token : token.partner;
+        if (synced && open.kind === 'fence' && lines[open.line]) {
+          markFence(lines[open.line], fieldFences(lines[open.line])[open.ordinal]);
+        }
+      }
+    } else if (mathfield) {
+      const fences = fieldFences(mathfield);
+      const index = fenceAtCaret(mathfield, fences);
+      if (index >= 0) {
+        markFence(mathfield, fences[index]);
+        if (showCode && synced) {
+          const line = lines.indexOf(mathfield);
+          const open = codeBrackets(codeArea.value).find(t => t.kind === 'fence' && t.open && t.line === line && t.ordinal === index);
+          if (open?.partner) codeMarks = [open, open.partner];
+        }
+      }
+    }
+    if (showCode) markCode(codeMarks);
+  }
+
+  for (const type of ['input', 'keyup', 'click', 'focus', 'blur']) codeArea.addEventListener(type, () => updateMatches());
+  codeArea.addEventListener('scroll', () => { codeMirror.scrollTop = codeArea.scrollTop; });
+  document.addEventListener('selectionchange', () => { if (codeFocused()) updateMatches(); });
+
   // ---------------------------------------------------------------- keyboard
 
   window.addEventListener('keydown', event => {
@@ -2279,6 +2530,13 @@
       inputKind = plain && event.key.length === 1 && !composing ? 'typing'
         : plain && (event.key === 'Backspace' || event.key === 'Delete') ? 'deleting' : 'other';
       if (inputKind === 'other') history.lastKind = null; // Moving the caret ends a run of typing.
+    }
+    if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) &&
+        lines.some(field => event.composedPath().includes(field)) && extendAcrossLines(keyName(event))) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
     }
     if (allSelected && keyName(event) && !['cmd+a', 'cmd+c', 'cmd+t', 'cmd+v', 'cmd+x'].includes(comboFromEvent(event)) &&
         !keymap[comboFromEvent(event)]) {
@@ -2309,6 +2567,14 @@
       setAllSelected(false);
     }
     if (composing && handleCompositionKey(event)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    // Brackets come in pairs, as in classic editors: ( [ { insert \left…\right with the caret inside,
+    // or around the selection; typed at the end of such a bracket's contents, its closing one steps out.
+    if (BRACKETS[event.key] && !event.metaKey && !event.ctrlKey && !event.altKey && !composing &&
+        lines.some(field => event.composedPath().includes(field)) && fieldModel()?.mode !== 'text' && typeBracket(event.key)) {
       event.preventDefault();
       event.stopImmediatePropagation();
       return;
@@ -2565,6 +2831,16 @@
     inputKind = 'other';
     history.lastKind = null; // A click ends a run of typing.
     const clicked = lines.find(field => event.composedPath().includes(field)) ?? null;
+    const target = clicked ?? (event.composedPath().includes(canvas) ? lineBeside(event.clientY) : null);
+    if (target && event.button === 0 && event.shiftKey && mathfield && (allSelected || target !== mathfield)) {
+      // ⇧-click in another line: the selection runs from where it began to the click.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const anchor = allSelected ? span.anchor : topLevelPosition(mathfield, false);
+      setSpan(anchor, { line: lines.indexOf(target), offset: offsetAtX(target, event.clientX) });
+      requestAnimationFrame(() => paintSpan({ redraw: true }));
+      return;
+    }
     if (clicked && event.button === 0 && !event.shiftKey) {
       // A drag may go on into other lines; it is anchored where the press was.
       drag = { field: clicked, anchor: { line: lines.indexOf(clicked), offset: offsetAtX(clicked, event.clientX) } };
@@ -2573,9 +2849,11 @@
       const beside = lineBeside(event.clientY);
       if (beside) drag = { field: null, anchor: { line: lines.indexOf(beside), offset: offsetAtX(beside, event.clientX) } };
     }
-    if (!allSelected) return;
-    const kept = clicked ?? lineBeside(event.clientY); // A click beside a line places the caret in it.
-    setAllSelected(false, kept, false); // At once: a key typed right after the click must not replace everything.
+    // A click in the equation area ends any selection elsewhere (the toolbar and palette keep it:
+    // they act on it). The line clicked, or beside the click, keeps its caret; below the lines, the last.
+    if (event.shiftKey || !event.composedPath().includes(canvas)) return;
+    const kept = clicked ?? lineBeside(event.clientY) ?? lines.at(-1);
+    if (allSelected) setAllSelected(false, kept, false); // At once: a key typed right after the click must not replace everything.
     document.addEventListener('pointerup', () => setTimeout(() => { if (!allSelected) collapseLines(kept); }),
       { once: true, capture: true });
   }, true);

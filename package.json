@@ -1,6 +1,6 @@
 {
   "name": "visual-typist",
-  "version": "1.11.2",
+  "version": "1.12.0",
   "private": true,
   "description": "Pinned versions of the math engines bundled with Visual Typist (see scripts/update-vendor.sh).",
   "license": "MIT",

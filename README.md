@@ -28,6 +28,13 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, functions, matrices and arrows — integrals, operators and matrices in large,
   display-style tiles.
+- **Brackets as in classic editors:** `(` `[` `{` insert a `\left…\right` pair with the caret
+  inside, or put the pair around the selection; at the end of a bracket's contents its closing
+  bracket steps out. ⌫ after an accent removes the accent (`\hat{V}` → `V`).
+- **Matching brackets** beside the caret are highlighted in the equation and in the LaTeX code
+  (`\left(` with `\right)`, `{` with `}`), and the same pair in the other pane.
+- **Selections** are made of whole elements; ⇧ with the arrows or a ⇧-click extends them across
+  lines, and a click elsewhere clears them.
 - **Typing as in classic editors:** function names become their commands (`sin` → `\sin`),
   nothing else is converted; Space inserts `\,\,` (after a function name it only ends the name).
 - **Type commands like an input method.** Type `\` and a name (`\mu`, `\frac`, `\sum`…): a
