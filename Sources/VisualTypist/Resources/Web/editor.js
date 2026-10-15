@@ -431,15 +431,18 @@
     return true;
   }
 
-  /** Marks every line as selected (⌘A), or ends that: the other lines' selections collapse. */
-  function setAllSelected(value) {
+  /**
+   * Marks every line as selected (⌘A), or ends that: the selections of all lines but `keep` (the
+   * line being edited, or the one just clicked) collapse.
+   */
+  function setAllSelected(value, keep = mathfield, collapse = true) {
     if (!value && !allSelected) return;
     allSelected = value;
-    for (const field of lines) {
-      field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', value);
-      if (!value && field !== mathfield) field.position = field.lastOffset;
-    }
+    for (const field of lines) field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', value);
+    if (!value && collapse) collapseLines(keep);
   }
+
+  const collapseLines = keep => { for (const field of lines) if (field !== keep) field.position = field.lastOffset; };
 
   /** Replaces the whole document with one empty line (after ⌘A, before typing). */
   function clearDocument() {
@@ -533,8 +536,16 @@
 
   // Empty slots are drawn like a classic equation editor's: a borderless light-blue block.
   // The slot holding the caret is a deeper blue, without MathLive's selection rectangle around it.
+  const SLOT = { width: 0.42, height: 0.69 }; // An empty slot's block, in em (see sizeSlots).
   const FIELD_CSS = `
-    .vt-slot { color: transparent !important; background: linear-gradient(var(--vt-slot), var(--vt-slot)) center / 58% 74% no-repeat !important; }
+    /* The block sits on the baseline at the size given to MathLive's layout (SLOT). */
+    .vt-slot {
+      display: inline-block; vertical-align: baseline; overflow: hidden; box-sizing: border-box;
+      width: ${SLOT.width}em; height: ${SLOT.height}em;
+      /* Drawn a little narrower than it lays out, so a fraction bar reaches past it. */
+      color: transparent !important;
+      background: linear-gradient(var(--vt-slot), var(--vt-slot)) center / 80% 100% no-repeat !important;
+    }
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
     .vt-slot-selected .ML__selection { display: none !important; }
     /* After ⌘A every line shows its selection, also the lines without focus. */
@@ -542,7 +553,7 @@
     /* A caret inside the slot that has it, at the block's left edge. */
     .vt-slot-active { position: relative; }
     .ML__focused .vt-slot-active::after {
-      content: ''; position: absolute; left: 21%; top: 13%; bottom: 13%; width: max(1.5px, .055em);
+      content: ''; position: absolute; left: 14%; top: 8%; bottom: 8%; width: max(1.5px, .055em);
       background: var(--vt-caret); animation: vt-caret-blink 1.06s steps(1) infinite;
     }
     @keyframes vt-caret-blink { 50% { opacity: 0; } }
@@ -696,8 +707,26 @@
     if (!PlaceholderAtom && scratchField) {
       scratchField.setValue('\\placeholder{}', { silenceNotifications: true });
       PlaceholderAtom = scratchField._mathfield?.model?.root?.body?.find(atom => atom.type === 'placeholder')?.constructor ?? null;
+      if (PlaceholderAtom) sizeSlots(PlaceholderAtom);
     }
     return PlaceholderAtom;
+  }
+
+  /**
+   * MathLive lays out an empty slot with the fallback metrics of its ▢ glyph: 0.8em wide and 0.2em
+   * below the baseline, which makes empty structures wider and taller than filled ones (the
+   * expression jumps when the first character goes in). Slots get the size of a classic editor's:
+   * a narrow block on the baseline, as tall as a letter with an ascender.
+   */
+  function sizeSlots(Placeholder) {
+    const render = Placeholder.prototype.render;
+    Placeholder.prototype.render = function (context) {
+      const box = render.call(this, context);
+      box.height = SLOT.height;
+      box.depth = 0;
+      box.width = SLOT.width;
+      return box;
+    };
   }
 
   const sameBranch = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -1968,6 +1997,7 @@
     await customElements.whenDefined('math-field');
 
     scratchField = await createField({ scratch: true });
+    placeholderClass(); // Sizes the slots before the first line renders.
     mathfield = await insertLine(0);
 
     await MathJax.startup.promise;
@@ -2038,8 +2068,15 @@
       post('action', { name: 'export', format: button.dataset.format });
     });
   }
+  // Captured: MathLive keeps pointer events inside a line to itself. The other lines' selections
+  // collapse once the click has moved the focus (changing them earlier would keep it where it was).
+  document.addEventListener('pointerdown', event => {
+    if (!allSelected) return;
+    const clicked = lines.find(field => event.composedPath().includes(field)) ?? null;
+    setAllSelected(false, clicked, false); // At once: a key typed right after the click must not replace everything.
+    document.addEventListener('pointerup', () => setTimeout(() => collapseLines(clicked)), { once: true, capture: true });
+  }, true);
   document.addEventListener('mousedown', event => {
-    setAllSelected(false);
     if (composing && !$('candidates').contains(event.target)) closeComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
     if (recording && !$('recorder').contains(event.target)) stopRecording();
