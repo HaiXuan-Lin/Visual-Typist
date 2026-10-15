@@ -55,8 +55,14 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
         contentController.add(WeakMessageHandler(self), name: "vt")
         webView.navigationDelegate = self
-        webView.onShortcut = { [weak self] combo in
-            self?.evaluate("window.vt.runShortcut(combo)", ["combo": combo])
+        webView.onShortcut = { [weak self] combo, done in
+            guard let self else { return done() }
+            Task {
+                do { _ = try await self.call("return window.vt.runShortcut(combo)", ["combo": combo]) } catch {
+                    self.onError?(error.localizedDescription)
+                }
+                done()
+            }
         }
         // Keep every open window's shortcuts in sync with edits made in any of them.
         NotificationCenter.default.addObserver(forName: ShortcutStore.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -233,9 +239,20 @@ final class EditorWebView: WKWebView {
     }
 
     var isRecordingShortcut = false
-    var onShortcut: ((String) -> Void)?
+    /// Runs a shortcut in the page; the handler calls its second argument when the page is done.
+    var onShortcut: ((String, @escaping () -> Void) -> Void)?
+
+    /// A shortcut runs in the page asynchronously, while typed keys reach it directly: keys typed
+    /// before a shortcut has finished wait for it, so that fast typing applies in order.
+    private var shortcutsRunning = 0
+    private var waitingKeys: [NSEvent] = []
 
     override func keyDown(with event: NSEvent) {
+        if shortcutsRunning > 0 || !waitingKeys.isEmpty { waitingKeys.append(event); return }
+        dispatchKey(event)
+    }
+
+    private func dispatchKey(_ event: NSEvent) {
         if handleShortcut(event) { return }
         // macOS may restore the app's remembered input method after activation; check per key.
         if restrictsToRomanInput { updateInputSource() }
@@ -243,28 +260,53 @@ final class EditorWebView: WKWebView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, handleShortcut(event) { return true }
+        guard event.type == .keyDown else { return super.performKeyEquivalent(with: event) }
+        if shortcutsRunning > 0 || !waitingKeys.isEmpty, let combo = shortcutCombo(event),
+           interceptedCombos.contains(combo) || combo == "cmd+c" {
+            waitingKeys.append(event)
+            return true
+        }
+        if handleShortcut(event) { return true }
         return super.performKeyEquivalent(with: event)
     }
 
-    private func handleShortcut(_ event: NSEvent) -> Bool {
+    private func shortcutFinished() {
+        shortcutsRunning -= 1
+        while shortcutsRunning == 0, !waitingKeys.isEmpty { dispatchKey(waitingKeys.removeFirst()) }
+    }
+
+    /// The combo of a key event with ⌃, ⌥ or ⌘ while the editor has focus.
+    private func shortcutCombo(_ event: NSEvent) -> String? {
         guard !isRecordingShortcut,
-              let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return false }
+              let responder = window?.firstResponder as? NSView, responder.isDescendant(of: self) else { return nil }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard !flags.intersection([.control, .option, .command]).isEmpty,
-              let key = KeyCombo.keyName(forKeyCode: event.keyCode) else { return false }
+              let key = KeyCombo.keyName(forKeyCode: event.keyCode) else { return nil }
         var modifiers: KeyCombo.Modifiers = []
         if flags.contains(.control) { modifiers.insert(.control) }
         if flags.contains(.option) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
         if flags.contains(.command) { modifiers.insert(.command) }
-        let combo = KeyCombo(modifiers: modifiers, key: key).description
+        return KeyCombo(modifiers: modifiers, key: key).description
+    }
+
+    private func handleShortcut(_ event: NSEvent) -> Bool {
+        guard let combo = shortcutCombo(event) else { return false }
         if combo == "cmd+c", restrictsToRomanInput, let onCopyEquation {
             onCopyEquation()
             return true
         }
-        guard interceptedCombos.contains(combo) else { return false }
-        onShortcut?(combo)
+        guard interceptedCombos.contains(combo), let onShortcut else { return false }
+        shortcutsRunning += 1
+        var finished = false
+        let finish = { [weak self] in
+            guard !finished else { return }
+            finished = true
+            self?.shortcutFinished()
+        }
+        onShortcut(combo, finish)
+        // Never hold typing up for long if the page doesn't answer.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { finish() }
         return true
     }
 }

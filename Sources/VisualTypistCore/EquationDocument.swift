@@ -134,7 +134,14 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         var result: [String] = []
         var current: String?
         var depth = 0
+        var brokenAtEnd = false // The previous line ended with \\ (the older style).
         for raw in latex.components(separatedBy: "\n") {
+            // Lines are separated by \\ on a line of its own (as classic editors write it) or, in
+            // older documents, by \\ at the end of a line.
+            if current == nil, raw.trimmingCharacters(in: .whitespaces) == #"\\"#, !result.isEmpty, !brokenAtEnd {
+                brokenAtEnd = true
+                continue
+            }
             current = current.map { $0 + "\n" + raw } ?? raw
             // Escaped braces and an escaped \% (text, not a comment) don't count.
             var code = raw.replacingOccurrences(of: #"\\"#, with: "")
@@ -144,6 +151,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
             depth += code.filter { $0 == "{" }.count - code.filter { $0 == "}" }.count
             depth += code.components(separatedBy: #"\begin{"#).count - code.components(separatedBy: #"\end{"#).count
             if depth <= 0 {
+                brokenAtEnd = (current ?? "").range(of: #"\\\\\s*$"#, options: .regularExpression) != nil
                 result.append(Self.withoutLineBreak(current ?? ""))
                 current = nil
                 depth = 0

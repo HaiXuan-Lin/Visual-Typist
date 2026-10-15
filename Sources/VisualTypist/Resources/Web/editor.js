@@ -20,7 +20,10 @@
   let lines = [];        // One editor field per line of the document.
   let loading = false;   // True while the editor is filled from LaTeX; edits are not reported then.
   let mathfield = null;  // The line with the caret.
-  let allSelected = false; // ⌘A selected every line: the next edit or copy applies to the whole document.
+  // A selection across lines (dragged over several lines, or ⌘A): the next edit or copy applies to it.
+  // `from` and `to` are {line, offset} at the top level of their lines; `all` marks ⌘A.
+  let allSelected = false;
+  let span = null;
   let scratchField = null;
   let overrides = {};
   let keymap = {};
@@ -214,9 +217,10 @@
    */
   function leaveSelectAll({ replace }) {
     if (!allSelected) return;
-    if (replace && lines.length > 1) { clearDocument(); return; }
+    const { from, to } = span;
+    if (replace && from.line !== to.line) { replaceSpan(''); return; }
     setAllSelected(false);
-    mathfield.position = mathfield.lastOffset;
+    focusAt(to.line, to.offset);
   }
 
   function insertItem(item) {
@@ -344,11 +348,17 @@
       return true;
     }
     if (allSelected) {
-      // After ⌘A a font applies to every line (each line is wrapped), and everything stays selected.
-      const restyled = lines.map(field => withoutPlaceholders(portableLatex(field.getValue('latex'))))
-        .map(line => (line.trim() ? wrap(line.trim()) : line)).join(' \\\\\n');
+      // Across lines a font applies to each line's selected part; after ⌘A everything stays selected.
+      const { from, to, all } = span;
+      const restyled = lines.map((field, index) => {
+        if (index < from.line || index > to.line) return lineLatex(field);
+        const start = index === from.line ? from.offset : 0;
+        const end = index === to.line ? to.offset : field.lastOffset;
+        const selected = lineLatex(field, start, end);
+        return lineLatex(field, 0, start) + (selected.trim() ? wrap(selected.trim()) : selected) + lineLatex(field, end);
+      }).join(LINE_BREAK);
       setAllSelected(false, mathfield, false);
-      setDocumentLatex(restyled).then(() => { syncFromField(); selectAll(); });
+      setDocumentLatex(restyled).then(() => { syncFromField(); if (all) selectAll(); });
       return true;
     }
     const model = fieldModel();
@@ -492,34 +502,133 @@
   function selectAll() {
     if (codeFocused()) { codeArea.select(); return true; }
     if (!mathfield) return false;
-    for (const field of lines) field.executeCommand('selectAll');
     mathfield.focus();
-    setAllSelected(lines.length > 1 || mathfield.lastOffset > 0);
+    if (lines.length > 1 || mathfield.lastOffset > 0) setAllSelected(true);
     return true;
   }
 
+  /** A line's LaTeX between two offsets, as the document writes it. */
+  const lineLatex = (field, start = 0, end = field.lastOffset) =>
+    withoutPlaceholders(portableLatex(start < end ? field.getValue(start, end, 'latex') : ''));
+
+  /** An offset inside a structure widened to the start (or end) of its top-level atom. */
+  function topLevelOffset(field, offset, toEnd) {
+    const model = fieldModel(field);
+    let atom = model?.at(offset);
+    if (!atom || atom.isRoot || atom.parent === model.root) return offset;
+    while (atom.parent && atom.parent !== model.root) atom = atom.parent;
+    const [start, end] = atomRange(model, atom);
+    return toEnd ? end : start;
+  }
+
+  /** Selects from `anchor` to `focus` ({line, offset}) across lines. */
+  function setSpan(anchor, focus, all = false) {
+    const [first, last] = anchor.line < focus.line || (anchor.line === focus.line && anchor.offset <= focus.offset)
+      ? [anchor, focus] : [focus, anchor];
+    span = {
+      from: { line: first.line, offset: topLevelOffset(lines[first.line], first.offset, false) },
+      to: { line: last.line, offset: topLevelOffset(lines[last.line], last.offset, true) },
+      all,
+    };
+    allSelected = true;
+    paintSpan();
+  }
+
+  /** Shows the selection in every line it covers, also in the lines without focus. */
+  function paintSpan() {
+    lines.forEach((field, index) => {
+      const covered = !!span && index >= span.from.line && index <= span.to.line;
+      field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', covered);
+      if (!covered) return;
+      const start = index === span.from.line ? span.from.offset : 0;
+      const end = index === span.to.line ? span.to.offset : field.lastOffset;
+      const [current] = field.selection.ranges;
+      if (Math.min(...current) !== start || Math.max(...current) !== end) field.selection = { ranges: [[start, end]] };
+    });
+  }
+
   /**
-   * Marks every line as selected (⌘A), or ends that: the selections of all lines but `keep` (the
-   * line being edited, or the one just clicked) collapse.
+   * Selects every line (⌘A), or ends a selection across lines: the selections of all lines but
+   * `keep` (the line being edited, or the one just clicked) collapse.
    */
   function setAllSelected(value, keep = mathfield, collapse = true) {
-    if (!value && !allSelected) return;
-    allSelected = value;
-    for (const field of lines) field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', value);
-    if (!value && collapse) collapseLines(keep);
+    if (value) {
+      const last = lines.length - 1;
+      setSpan({ line: 0, offset: 0 }, { line: last, offset: lines[last].lastOffset }, true);
+      return;
+    }
+    if (!allSelected) return;
+    allSelected = false;
+    span = null;
+    for (const field of lines) field.shadowRoot?.querySelector('.ML__container')?.classList.remove('vt-all-selected');
+    if (collapse) collapseLines(keep);
   }
 
   const collapseLines = keep => { for (const field of lines) if (field !== keep) field.position = field.lastOffset; };
 
-  /** Replaces the whole document with one empty line (after ⌘A, before typing). */
+  /**
+   * Focuses a line. MathLive hands it the keyboard only 60 ms later; keys typed meanwhile would go
+   * to the previous line, so until then they are sent to this one (see the keydown handler).
+   */
+  let pendingFocus = null;
+  function focusNow(field) {
+    field.focus();
+    pendingFocus = field;
+    setTimeout(() => { if (pendingFocus === field) pendingFocus = null; }, 100);
+  }
+
+  function focusAt(line, offset) {
+    const field = lines[Math.min(line, lines.length - 1)];
+    focusNow(field);
+    mathfield = field;
+    field.position = Math.min(offset, field.lastOffset);
+  }
+
+  /** The LaTeX of the selection across lines. */
+  function spanLatex() {
+    const { from, to } = span;
+    if (from.line === to.line) return lineLatex(lines[from.line], from.offset, to.offset);
+    const middle = lines.slice(from.line + 1, to.line).map(field => lineLatex(field));
+    return [lineLatex(lines[from.line], from.offset), ...middle, lineLatex(lines[to.line], 0, to.offset)].join(LINE_BREAK);
+  }
+
+  /**
+   * Replaces the selection across lines with `latex` (which may hold several lines) and puts the
+   * caret after it. A single line is replaced at once, so a key typed right after goes in after it.
+   */
+  function replaceSpan(latex = '') {
+    if (!span) return;
+    const { from, to } = span;
+    const glue = (left, right) => (/\\[a-zA-Z]+$/.test(left) && /^[a-zA-Z]/.test(right) ? ' ' : '');
+    const head = lineLatex(lines[from.line], 0, from.offset);
+    const tail = lineLatex(lines[to.line], to.offset);
+    const tailOffsets = lines[to.line].lastOffset - to.offset;
+    const parts = latex ? splitLines(cleanLatex(latex)) : [''];
+    parts[0] = head + glue(head, parts[0]) + parts[0];
+    parts[parts.length - 1] += glue(parts.at(-1), tail) + tail;
+    setAllSelected(false, null, false);
+    if (parts.length === 1) {
+      const field = lines[from.line];
+      for (let index = to.line; index > from.line; index -= 1) removeLine(lines[index], field);
+      field.setValue(parts[0], { silenceNotifications: true, format: 'latex' });
+      restorePlaceholders(field);
+      focusAt(from.line, field.lastOffset - tailOffsets);
+      syncFromField();
+      return;
+    }
+    const before = lines.slice(0, from.line).map(field => lineLatex(field));
+    const after = lines.slice(to.line + 1).map(field => lineLatex(field));
+    setDocumentLatex([...before, ...parts, ...after].join(LINE_BREAK)).then(() => {
+      const line = from.line + parts.length - 1;
+      focusAt(line, lines[line].lastOffset - tailOffsets);
+      syncFromField();
+    });
+  }
+
+  /** Replaces the whole document with one empty line. */
   function clearDocument() {
-    setAllSelected(false);
-    const first = lines[0];
-    first.focus();
-    mathfield = first;
-    for (const field of lines.slice(1)) removeLine(field, first);
-    first.setValue('', { silenceNotifications: true });
-    syncFromField();
+    if (!span) setAllSelected(true);
+    if (span) replaceSpan('');
   }
 
   /** ⌘⌫: empties the line; an empty line is removed. */
@@ -549,7 +658,7 @@
 
   /** The LaTeX of the selection (the whole document after ⌘A), or null when nothing is selected. */
   function selectionLatex() {
-    if (allSelected) return documentLatex();
+    if (allSelected) return spanLatex();
     if (codeFocused()) {
       const { selectionStart, selectionEnd, value } = codeArea;
       return selectionStart === selectionEnd ? null : value.slice(selectionStart, selectionEnd);
@@ -581,18 +690,25 @@
    * block written over several lines, say) belongs to that line rather than starting a new one.
    */
   function splitLines(latex) {
-    // A line break written as \\ at the end of a line is the separator, not part of the line.
+    // Lines are separated by \\ on a line of its own, as classic editors write it, or (in older
+    // documents) by \\ at the end of a line; the separator is not part of the line.
     const finish = line => line.replace(/\s*\\\\\s*$/, '');
     const result = [];
     let current = null;
     let depth = 0;
+    let brokenAtEnd = false; // The previous line ended with \\ (the older style).
     for (const raw of latex.split('\n')) {
+      if (current === null && raw.trim() === '\\\\' && result.length && !brokenAtEnd) {
+        brokenAtEnd = true; // A separator line.
+        continue;
+      }
       current = current === null ? raw : `${current}\n${raw}`;
       // An escaped \% is text, not the start of a comment.
       const code = raw.replace(/\\\\/g, '').replace(/\\[{}%]/g, '').replace(/%.*$/, '');
       depth += (code.match(/\{/g) || []).length - (code.match(/\}/g) || []).length;
       depth += (code.match(/\\begin\{/g) || []).length - (code.match(/\\end\{/g) || []).length;
       if (depth <= 0) {
+        brokenAtEnd = /\\\\\s*$/.test(current);
         result.push(finish(current));
         current = null;
         depth = 0;
@@ -604,6 +720,13 @@
 
   // Empty slots are drawn like a classic equation editor's: a borderless light-blue block.
   // The slot holding the caret is a deeper blue, without MathLive's selection rectangle around it.
+  // Typed function names become their commands (sin → \sin), as in classic editors; nothing else is
+  // converted (MathLive would also turn pi, dx, -> and others into symbols, and lim into a template).
+  const FUNCTION_NAMES = new Set(['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'arcsin', 'arccos', 'arctan',
+    'sinh', 'cosh', 'tanh', 'coth', 'ln', 'lg', 'log', 'exp', 'lim', 'liminf', 'limsup', 'max', 'min', 'sup', 'inf',
+    'det', 'dim', 'ker', 'deg', 'gcd', 'arg', 'hom', 'Pr']);
+  const INLINE_SHORTCUTS = Object.fromEntries([...FUNCTION_NAMES].map(name => [name, `\\${name}`]));
+  const LINE_BREAK = '\n\\\\\n'; // Between the lines of the document, as classic editors write it.
   const SLOT = { width: 0.42, height: 0.69 }; // An empty slot's block, in em (see sizeSlots).
   const FIELD_CSS = `
     /* The block sits on the baseline at the size given to MathLive's layout (SLOT). */
@@ -662,7 +785,8 @@
     (scratch ? document.body : fieldHost).insertBefore(field, scratch ? null : before);
     await mounted;
     field.menuItems = [];
-    field.mathModeSpace = '\\ ';
+    field.mathModeSpace = '\\,\\,'; // Space, as classic editors write it.
+    field.inlineShortcuts = INLINE_SHORTCUTS;
     field.letterShapeStyle = 'tex';
     if (!scratch) {
       const style = document.createElement('style');
@@ -731,9 +855,9 @@
     if (!lines.includes(mathfield)) mathfield = lines[0];
   }
 
-  /** The document as LaTeX: one line per equation line, separated by \\. */
+  /** The document as LaTeX: one line per equation line, with \\ on a line of its own between them. */
   function documentLatex() {
-    return lines.map(field => withoutPlaceholders(portableLatex(field.getValue('latex')))).join(' \\\\\n');
+    return lines.map(field => withoutPlaceholders(portableLatex(field.getValue('latex')))).join(LINE_BREAK);
   }
 
   /** Empty slots are an editing aid; in LaTeX they are empty groups, as classic editors write them. */
@@ -749,6 +873,10 @@
   function portableLatex(latex) {
     return latex
       .replace(/\\bm(?![a-zA-Z])/g, '\\boldsymbol')
+      // MathLive's own commands for d, e, i and j.
+      .replace(/\\differentialD(?![a-zA-Z])/g, '\\mathrm{d}').replace(/\\capitalDifferentialD(?![a-zA-Z])/g, '\\mathrm{D}')
+      .replace(/\\exponentialE(?![a-zA-Z])/g, '\\mathrm{e}').replace(/\\imaginaryI(?![a-zA-Z])/g, '\\mathrm{i}')
+      .replace(/\\imaginaryJ(?![a-zA-Z])/g, '\\mathrm{j}')
       .replace(/\\doubleprime(?![a-zA-Z])/g, '\\prime\\prime')
       .replace(/\\middle\{(\\[a-zA-Z]+|\\?[^{}\s])\}/g,
         (_, delimiter) => `\\middle${delimiter}${/^\\[a-zA-Z]+$/.test(delimiter) ? ' ' : ''}`);
@@ -1076,6 +1204,13 @@
     // Right after a structure (or after an operator's empty operand).
     if (!model.selectionIsCollapsed) return false;
     let before = model.at(model.position);
+    // A typed space (\,\,) goes as one.
+    if (before?.command === '\\,' && before.leftSibling?.command === '\\,') {
+      mathfield.selection = { ranges: [[model.position - 2, model.position]] };
+      mathfield.executeCommand('deleteBackward');
+      syncFromField();
+      return true;
+    }
     if (before?.type === 'placeholder' && LARGE_OPERATORS.has(before.leftSibling?.type)) before = before.leftSibling;
     before = operatorOf(before) ?? before;
     if (!isStructure(before)) return false;
@@ -1204,6 +1339,15 @@
     const here = model.at(model.position);
     const enclosing = new Set();
     for (let atom = here.parent?.parent; atom; atom = atom.parent) enclosing.add(atom);
+    // Inside the structures of the caret's own row (the √ just left of it, say) a position counts
+    // as above or below only if it is clearly so, not just a little off-centre.
+    const inOwnRow = atom => {
+      for (let node = atom.parent; node; node = node.parent) {
+        if (node.parent === here.parent && sameBranch(node.parentBranch, here.parentBranch)) return true;
+      }
+      return false;
+    };
+    const clearly = 0.35 * parseFloat(getComputedStyle(mathfield).fontSize);
     const candidates = [];
     for (let offset = 0; offset <= model.lastOffset; offset += 1) {
       const atom = model.at(offset);
@@ -1212,7 +1356,7 @@
       const point = caretPoint(model, offset);
       if (!point) continue;
       const distance = (point.y - origin.y) * direction;
-      if (distance < 4) continue;
+      if (distance < (inOwnRow(atom) ? clearly : 4)) continue;
       // Prefer positions straight above or below: horizontal distance counts double.
       const score = distance + 2 * Math.abs(point.x - origin.x);
       candidates.push({ offset, score, outer: enclosing.has(atom.parent) });
@@ -1282,6 +1426,40 @@
     return true;
   }
 
+  /**
+   * ↩ inside a slot, as in classic editors: a script, a limit, a root or a bracket becomes an array
+   * whose next row gets the caret (in an array, another row is added); a fraction's or an
+   * operand's slot takes no new row. Returns true (the key is used either way).
+   */
+  function slotRows(model) {
+    const atom = caretAtom(model);
+    let owner = atom.parent;
+    if (owner.type === 'array') {
+      mathfield.executeCommand('addRowAfter');
+      syncFromField();
+      return true;
+    }
+    const branch = atom.parentBranch;
+    const eligible = SCRIPT_BRANCHES.includes(branch) || owner.type === 'surd' || owner.type === 'leftright';
+    if (!eligible || (owner.type === 'surd' && branch !== 'body')) return true;
+    const slot = owner.type === 'leftright' ? segmentAt(atom) : { boundary: branchAtoms(owner, branch)[0], atoms: branchAtoms(owner, branch).slice(1) };
+    const start = model.offsetOf(slot.boundary);
+    const end = slot.atoms.length ? model.offsetOf(slot.atoms.at(-1)) : start;
+    const caret = model.selectionIsPlaceholder ? end : model.position;
+    const part = (from, to) => withoutPlaceholders(from < to ? mathfield.getValue(from, to, 'latex') : '') || '\\placeholder{}';
+    const align = owner.type === 'surd' ? 'l' : 'c';
+    const rows = `\\begin{array}{${align}}${part(start, caret)}\\\\${part(caret, end)}\\end{array}`;
+    mathfield.selection = { ranges: [[start, end]] };
+    mathfield.insert(rows, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    // The caret goes to the start of the second row.
+    const after = fieldModel();
+    let array = after.at(after.position);
+    while (array && array.type !== 'array') array = array.leftSibling?.type === 'array' ? array.leftSibling : array.parent;
+    if (array) moveCaretTo(after.offsetOf(branchAtoms(array, [1, 0])[0]));
+    syncFromField();
+    return true;
+  }
+
   /** Handles the keys whose behavior follows classic equation editors. Returns true if handled. */
   function handleEditingKey(event, key) {
     const model = fieldModel();
@@ -1292,12 +1470,17 @@
     switch (key) {
       case 'enter':
         if (shift) return false;
+        if (caretAtom(model)?.parent && !caretAtom(model).parent.isRoot) return slotRows(model); // Inside a slot.
         splitLine();
         return true;
       case 'backspace':
         if (shift) return false;
         if (collapsed && model.position === 0 && index > 0) { mergeLines(index - 1, index); return true; }
         return backspace();
+      case 'space':
+        // Right after a function name (sin, typed or chosen) a space only ends the name, as in classic editors.
+        if (shift || !collapsed) return false;
+        return FUNCTION_NAMES.has(model.at(model.position)?.command?.slice(1));
       case 'forwarddelete':
         if (collapsed && model.position === mathfield.lastOffset && index < lines.length - 1) {
           mergeLines(index, index + 1);
@@ -1761,6 +1944,9 @@
   }
 
   /** Candidates for `query` (the letters after \): exact, prefix, contains, subsequence, then first letter. */
+  // Of two candidates with one name, the bare command (\lim) comes before the template (\lim_{▢\to▢}▢).
+  const isTemplate = entry => ((entry.item?.latex ?? entry.latex ?? '').includes('#') ? 1 : 0);
+
   function candidatesFor(query) {
     commandIndex ??= buildCommandIndex();
     if (!query) return commandIndex.filter(entry => entry.rank < 0).sort((a, b) => a.rank - b.rank);
@@ -1780,7 +1966,8 @@
     const shown = new Set();
     return commandIndex.map(entry => ({ entry, tier: tier(entry) }))
       .filter(match => match.tier < Infinity)
-      .sort((a, b) => a.tier - b.tier || a.entry.rank - b.entry.rank || a.entry.name.length - b.entry.name.length)
+      .sort((a, b) => a.tier - b.tier || isTemplate(a.entry) - isTemplate(b.entry) || a.entry.rank - b.entry.rank ||
+        a.entry.name.length - b.entry.name.length)
       .filter(({ entry, tier: level }) => {
         if (level === 0) return true;
         if (shown.has(entry.name)) return false;
@@ -2025,6 +2212,20 @@
 
   window.addEventListener('keydown', event => {
     if (recording) return handleRecordingKey(event);
+    if (pendingFocus && !event.metaKey && !event.ctrlKey && !event.altKey && !composing &&
+        !event.composedPath().includes(pendingFocus) && (event.key.length === 1 || event.key === 'Backspace')) {
+      // The line just focused doesn't have the keyboard yet.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      inputKind = event.key === 'Backspace' ? 'deleting' : 'typing';
+      mathfield = pendingFocus;
+      if (event.key === '\\') startComposition('math');
+      else if (event.key === '^' || event.key === '_') insertLatex(`${event.key}{#0}`);
+      else if (event.key === 'Backspace') { if (!backspace()) pendingFocus.executeCommand('deleteBackward'); }
+      else pendingFocus.executeCommand(['typedText', event.key]);
+      syncFromField();
+      return;
+    }
     if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) {
       const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
       inputKind = plain && event.key.length === 1 && !composing ? 'typing'
@@ -2037,15 +2238,24 @@
       if (plain && (event.key === 'Backspace' || event.key === 'Delete')) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        clearDocument();
+        replaceSpan('');
         return;
       }
       if (plain && event.key.length === 1 && event.key !== '\\') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        clearDocument();
-        mathfield.executeCommand(['typedText', event.key]); // The character starts the new content.
+        replaceSpan('');
+        mathfield.executeCommand(['typedText', event.key]); // The character takes the selection's place.
         syncFromField();
+        return;
+      }
+      if (!event.metaKey && !event.ctrlKey && ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(event.key)) {
+        // An arrow collapses the selection to its start or end.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const edge = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? span.from : span.to;
+        setAllSelected(false, null);
+        focusAt(edge.line, edge.offset);
         return;
       }
       setAllSelected(false);
@@ -2282,32 +2492,23 @@
       post('action', { name: 'export', format: button.dataset.format });
     });
   }
-  // A paste after ⌘A replaces the whole document (pasted lines become lines).
+  // A paste replaces a selection across lines (pasted lines become lines).
   document.addEventListener('paste', event => {
     if (!allSelected || codeFocused()) return;
     const text = event.clipboardData?.getData('text/plain');
     if (!text) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    setAllSelected(false, mathfield, false);
-    inputKind = 'other';
-    setDocumentLatex(text).then(() => {
-      syncFromField();
-      const last = lines.at(-1);
-      last.focus();
-      mathfield = last;
-      last.position = last.lastOffset;
-    });
+    replaceSpan(text);
   }, true);
 
-  // A cut after ⌘A takes the whole document.
+  // A cut takes a selection across lines.
   document.addEventListener('cut', event => {
     if (!allSelected || codeFocused()) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    event.clipboardData?.setData('text/plain', documentLatex());
-    inputKind = 'other';
-    clearDocument();
+    event.clipboardData?.setData('text/plain', spanLatex());
+    replaceSpan('');
   }, true);
 
   // Captured: MathLive keeps pointer events inside a line to itself. The other lines' selections
@@ -2315,10 +2516,53 @@
   document.addEventListener('pointerdown', event => {
     inputKind = 'other';
     history.lastKind = null; // A click ends a run of typing.
-    if (!allSelected) return;
     const clicked = lines.find(field => event.composedPath().includes(field)) ?? null;
+    if (clicked && event.button === 0 && !event.shiftKey) {
+      // A drag may go on into other lines; it is anchored where the press was.
+      drag = { field: clicked, anchor: { line: lines.indexOf(clicked), offset: offsetAtX(clicked, event.clientX) } };
+    }
+    if (!allSelected) return;
     setAllSelected(false, clicked, false); // At once: a key typed right after the click must not replace everything.
-    document.addEventListener('pointerup', () => setTimeout(() => collapseLines(clicked)), { once: true, capture: true });
+    document.addEventListener('pointerup', () => setTimeout(() => { if (!allSelected) collapseLines(clicked); }),
+      { once: true, capture: true });
+  }, true);
+
+  // Dragging from one line into others selects across them, as in classic editors.
+  let drag = null;
+
+  /** The top-level offset in `field` nearest to x (MathLive's own hit test needs the line focused). */
+  function offsetAtX(field, x) {
+    const model = fieldModel(field);
+    if (!model) return 0;
+    let offset = 0;
+    for (const atom of model.root.body) {
+      if (atom.type === 'first') continue;
+      const box = field._mathfield.getHTMLElement?.(atom)?.getBoundingClientRect();
+      if (!box || x < box.left + box.width / 2) break;
+      offset = model.offsetOf(atom);
+    }
+    return offset;
+  }
+  function lineAt(y) {
+    const boxes = lines.map(field => field.getBoundingClientRect());
+    const index = boxes.findIndex(box => y >= box.top && y < box.bottom);
+    if (index >= 0) return lines[index];
+    return y < boxes[0].top ? lines[0] : lines.at(-1);
+  }
+  document.addEventListener('pointermove', event => {
+    if (!drag?.anchor || !(event.buttons & 1)) return;
+    const target = lineAt(event.clientY);
+    if (target === drag.field) {
+      // Back in the line where the drag began: MathLive's own selection again.
+      if (allSelected && !span.all) setAllSelected(false, drag.field);
+      return;
+    }
+    setSpan(drag.anchor, { line: lines.indexOf(target), offset: offsetAtX(target, event.clientX) });
+    requestAnimationFrame(paintSpan); // MathLive goes on extending the selection in the line it captured.
+  }, true);
+  document.addEventListener('pointerup', () => {
+    if (drag && allSelected) requestAnimationFrame(paintSpan);
+    drag = null;
   }, true);
   document.addEventListener('mousedown', event => {
     if (composing && !$('candidates').contains(event.target)) closeComposition();

@@ -7,7 +7,9 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
 - **Visual editing** on top, **symbol palette** below — or flip the bottom pane to the
   **LaTeX code** (`⌃⇥`). Both stay in sync as you type.
 - **Structured editing like a classic equation editor:** a document of equation lines (↩ starts
-  a new line, ⌫ at the start of a line joins it to the one above); empty slots show as light-blue
+  a new line, ⌫ at the start of a line joins it to the one above; inside a script, a limit, a root
+  or a bracket ↩ turns the slot into an array and starts its next row); dragging the mouse selects
+  across lines; empty slots show as light-blue
   blocks (in the LaTeX they are plain `{}`); ←/→ and ⇥ / ⇧⇥ walk the slots in order (∑ and ∫:
   lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
   upper ↔ lower limit, matrix rows) and lines. ⌫ right after a structure (fraction, root,
@@ -25,6 +27,8 @@ and export to PDF, PNG, SVG, LaTeX or MathML.
   symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
   operators, functions, matrices and arrows — integrals, operators and matrices in large,
   display-style tiles.
+- **Typing as in classic editors:** function names become their commands (`sin` → `\sin`),
+  nothing else is converted; Space inserts `\,\,` (after a function name it only ends the name).
 - **Type commands like an input method.** Type `\` and a name (`\mu`, `\frac`, `\sum`…): a
   candidate bar shows matching symbols and templates. `Space` takes the first, `1`–`8` pick one,
   `↩` keeps the command as typed, `⎋` cancels, `,` `.` page through. Works in the LaTeX pane too.
@@ -128,7 +132,8 @@ scripts/                       test runner, vendor update, icon generator
 ```
 
 Documents are saved as `.vteq` (JSON with the LaTeX source and display settings). In the LaTeX
-the equation lines are separated by `\\`; multi-line documents export as a left-aligned array, blank
+the equation lines are separated by `\\` on a line of its own (as classic editors write it; `\\` at
+the end of a line is read too); multi-line documents export as a left-aligned array, blank
 lines between equations included. Sizes are in points: an SVG or PDF at 32 pt is as large as 32 pt text. The app also
 opens `.tex`, `.latex` and `.txt` files containing a single equation.
 

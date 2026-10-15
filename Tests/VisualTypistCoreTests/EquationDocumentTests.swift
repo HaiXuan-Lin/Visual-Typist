@@ -90,6 +90,16 @@ struct EquationDocumentTests {
         #expect(inline.standaloneTeX().contains("\\begin{array}{l}\na \\\\\nb\n"))
     }
 
+    @Test func lineBreaksOnTheirOwnLineSeparateLines() {
+        // As classic editors write it: \\ on a line of its own, a blank line in between.
+        #expect(EquationDocument(latex: "a\n\\\\\nb").lines == ["a", "b"])
+        #expect(EquationDocument(latex: "a\n\\\\\n\n\\\\\nb").lines == ["a", "", "b"])
+        #expect(EquationDocument(latex: "\n\\\\\nb").lines == ["", "b"])
+        // The older style: \\ at the end of a line.
+        #expect(EquationDocument(latex: "a \\\\\n \\\\\nb").lines == ["a", "", "b"])
+        #expect(EquationDocument(latex: "\\begin{aligned}x\\\\\ny\\end{aligned}\n\\\\\nz").lines == ["\\begin{aligned}x\\\\\ny\\end{aligned}", "z"])
+    }
+
     @Test func escapedPercentIsNotAComment() {
         #expect(EquationDocument(latex: "\\text{50\\%}\nx").lines == ["\\text{50\\%}", "x"])
         #expect(EquationDocument(latex: "\\frac{1}{% note\n2}").lines == ["\\frac{1}{% note\n2}"])
