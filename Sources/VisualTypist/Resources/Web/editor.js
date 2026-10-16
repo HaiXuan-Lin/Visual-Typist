@@ -36,8 +36,13 @@
 
   // ---------------------------------------------------------------- native bridge
 
+  // In the app the page talks to the native side; in a browser (the web edition) it does the work itself.
+  const IN_APP = !!window.webkit?.messageHandlers?.vt;
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+
   function post(type, payload = {}) {
-    try { window.webkit?.messageHandlers?.vt?.postMessage({ type, ...payload }); }
+    if (!IN_APP) { webBridge(type, payload); return; }
+    try { window.webkit.messageHandlers.vt.postMessage({ type, ...payload }); }
     catch (error) { console.warn('Native bridge unavailable:', error); }
   }
 
@@ -74,7 +79,9 @@
   function comboFromEvent(event) {
     const key = keyName(event);
     if (!key) return null;
-    const flags = { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, cmd: event.metaKey };
+    // Off a Mac, Ctrl plays the part of ⌘ (the shortcuts are written for ⌘).
+    const flags = IS_MAC ? { ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, cmd: event.metaKey }
+      : { ctrl: false, alt: event.altKey, shift: event.shiftKey, cmd: event.ctrlKey || event.metaKey };
     return [...MODIFIERS.map(([name]) => flags[name] && name).filter(Boolean), key].join('+');
   }
 
@@ -95,6 +102,11 @@
   function displayCombo(combo) {
     const parts = combo.split('+');
     const key = parts.pop();
+    if (!IS_MAC) {
+      const words = { cmd: 'Ctrl', alt: 'Alt', shift: 'Shift' };
+      return [...['cmd', 'alt', 'shift'].filter(name => parts.includes(name)).map(name => words[name]),
+        KEY_SYMBOLS[key] || key.toUpperCase()].join('+');
+    }
     return MODIFIERS.filter(([name]) => parts.includes(name)).map(([, symbol]) => symbol).join('') +
       (KEY_SYMBOLS[key] || key.toUpperCase());
   }
@@ -546,7 +558,12 @@
     lines.forEach((field, index) => {
       const covered = !!span && index >= span.from.line && index <= span.to.line;
       field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-all-selected', covered);
-      if (!covered) return;
+      if (!covered) {
+        // A line the selection no longer covers (it shrank) keeps no selection of its own.
+        const [range] = field.selection.ranges;
+        if (span && range[0] !== range[1]) field.position = Math.max(...range);
+        return;
+      }
       const start = index === span.from.line ? span.from.offset : 0;
       const end = index === span.to.line ? span.to.offset : field.lastOffset;
       const [current] = field.selection.ranges;
@@ -2423,6 +2440,104 @@
     }
   }
 
+  // ---------------------------------------------------------------- web edition
+
+  // What the app's native side does, done in the browser: files, the clipboard, export, settings.
+  const download = (name, data, type) => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  };
+  const EXPORT_MARGIN = 12; // As in the app.
+
+  /** The equation as a standalone SVG, sized in points like the app's. */
+  async function webSVG() {
+    const rendered = await window.vt.exportSVG({ latex: selectionLatex() ?? state.latex });
+    const width = rendered.width + 2 * EXPORT_MARGIN;
+    const height = rendered.height + 2 * EXPORT_MARGIN;
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}pt" height="${height}pt" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="white"/><g transform="translate(${EXPORT_MARGIN} ${EXPORT_MARGIN})">${rendered.svg}</g></svg>\n`;
+    return { svg, width, height, mathml: rendered.mathml };
+  }
+
+  async function webPNG(scale = 2) {
+    const { svg, width, height } = await webSVG();
+    const image = new Image();
+    image.src = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(width * scale);
+    canvas.height = Math.ceil(height * scale);
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(image.src);
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+  }
+
+  function webOpen() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.vteq,.json,.tex,.latex,.txt';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const data = /\.(vteq|json)$/i.test(file.name) ? JSON.parse(text) : { latex: text };
+        await window.vt.setState({ latex: data.latex ?? '', fontSize: data.fontSize, color: data.colorHex, displayStyle: data.displayStyle });
+        toast(`Opened ${file.name}`);
+      } catch (error) {
+        toast(`Can't open ${file.name}`);
+      }
+    });
+    input.click();
+  }
+
+  async function webAction(name, payload) {
+    try {
+      switch (name) {
+        case 'new': await window.vt.setState({ latex: '' }); return;
+        case 'open': webOpen(); return;
+        case 'save': {
+          const document_ = { schemaVersion: 1, latex: state.latex, fontSize: state.fontSize, colorHex: state.color,
+            displayStyle: state.displayStyle, transparentBackground: false };
+          download('Equation.vteq', JSON.stringify(document_, null, 2), 'application/json');
+          return;
+        }
+        case 'copyLatex':
+          await navigator.clipboard.writeText(selectionLatex() ?? state.latex);
+          toast('LaTeX copied');
+          return;
+        case 'copyImage':
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': webPNG() })]);
+          toast('Image copied');
+          return;
+        case 'export': {
+          const format = payload.format;
+          if (format === 'svg') download('Equation.svg', (await webSVG()).svg, 'image/svg+xml');
+          else if (format === 'png') download('Equation.png', await webPNG(), 'image/png');
+          else if (format === 'latex') download('Equation.tex', state.latex + '\n', 'text/x-tex');
+          else if (format === 'mathml') download('Equation.mml', (await webSVG()).mathml, 'application/mathml+xml');
+          return;
+        }
+        default:
+      }
+    } catch (error) {
+      toast(error?.message || 'This needs the Mac app.');
+    }
+  }
+
+  function webBridge(type, payload) {
+    if (type === 'action') webAction(payload.name, payload);
+    else if (type === 'theme') { try { localStorage.setItem('vt.theme', payload.mode); } catch (_) { /* Optional. */ } }
+    else if (type === 'saveShortcuts') { try { localStorage.setItem('vt.shortcuts', JSON.stringify(payload.overrides)); } catch (_) { /* Optional. */ } }
+  }
+
+  if (!IN_APP) {
+    try { window.VT_USER_SHORTCUTS ??= JSON.parse(localStorage.getItem('vt.shortcuts') || '{}'); } catch (_) { /* Optional. */ }
+    document.documentElement.classList.add('web-edition'); // PDF export and the like are the app's.
+  }
+
   // ---------------------------------------------------------------- matching brackets
 
   // Beside the caret, a bracket and its partner are highlighted — in the LaTeX code (\left( with
@@ -2901,13 +3016,15 @@
       requestAnimationFrame(() => paintSpan({ redraw: true }));
       return;
     }
-    if (clicked && event.button === 0 && !event.shiftKey) {
-      // A drag may go on into other lines; it is anchored where the press was.
-      drag = { field: clicked, anchor: { line: lines.indexOf(clicked), offset: offsetAtX(clicked, event.clientX) } };
-    } else if (!clicked && event.button === 0 && (event.target === canvas || event.target === fieldHost)) {
-      // Beside a line (in the margin): the drag starts at that line's start or end and is ours alone.
-      const beside = lineBeside(event.clientY);
-      if (beside) drag = { field: null, anchor: { line: lines.indexOf(beside), offset: offsetAtX(beside, event.clientX) } };
+    if (event.button === 0 && !event.shiftKey && event.isPrimary !== false && lines.length &&
+        (clicked || event.target === canvas || event.target === fieldHost)) {
+      // A drag may go on into other lines; it is anchored where the press was. Within a line MathLive
+      // tracks it until it leaves the line; beside or below the lines it is ours from the start.
+      drag = {
+        pointerId: event.pointerId, id: ++dragCount, field: clicked, owned: !clicked,
+        anchor: clicked ? { line: lines.indexOf(clicked), offset: offsetAtX(clicked, event.clientX) }
+          : positionAt(event.clientX, event.clientY),
+      };
     }
     // A click in the equation area ends any selection elsewhere (the toolbar and palette keep it:
     // they act on it). The line clicked, or beside the click, keeps its caret; below the lines, the last.
@@ -2918,8 +3035,52 @@
       { once: true, capture: true });
   }, true);
 
-  // Dragging from one line into others selects across them, as in classic editors.
+  // Dragging from one line into others selects across them, as in classic editors. One gesture at a
+  // time (by pointer id); once it leaves its line, the selection has one owner: this code.
   let drag = null;
+  let dragCount = 0;
+
+  /** The position {line, offset} under a point: above the lines, the start; below them, the end. */
+  function positionAt(x, y) {
+    const first = lines[0].getBoundingClientRect();
+    const last = lines.at(-1).getBoundingClientRect();
+    if (y < first.top) return { line: 0, offset: 0 };
+    if (y >= last.bottom) return { line: lines.length - 1, offset: lines.at(-1).lastOffset };
+    const field = lineAt(y);
+    return { line: lines.indexOf(field), offset: offsetAtX(field, x) };
+  }
+
+  /** Moves the drag's end to the point; the first move out of the starting line takes the drag over. */
+  function dragTo(x, y) {
+    const focus = positionAt(x, y);
+    if (!drag.owned) {
+      if (focus.line === drag.anchor.line) return; // MathLive's own selection within its line.
+      // MathLive stops tracking (and releases the pointer) on a cancel; from now on only this code
+      // writes the selection, so the starting line no longer has two writers.
+      drag.owned = true;
+      drag.field?._mathfield?.field?.dispatchEvent(new PointerEvent('pointercancel', {
+        pointerId: drag.pointerId, bubbles: true, composed: true }));
+    }
+    if (focus.line === drag.anchor.line && focus.offset === drag.anchor.offset) {
+      if (allSelected) { setAllSelected(false, lines[focus.line]); lines[focus.line].position = focus.offset; }
+      return;
+    }
+    setSpan(drag.anchor, focus);
+    schedulePaint();
+  }
+
+  /** Draws the spanning selection once per frame, for the gesture that asked (later ones skip it). */
+  function schedulePaint() {
+    if (drag.painting) return;
+    drag.painting = true;
+    const gesture = drag;
+    requestAnimationFrame(() => {
+      gesture.painting = false;
+      if (drag === gesture || drag === null) paintSpan({ redraw: true });
+    });
+  }
+
+  function endDrag() { drag = null; }
 
   /** The top-level offset in `field` nearest to x (MathLive's own hit test needs the line focused). */
   function offsetAtX(field, x) {
@@ -2946,25 +3107,20 @@
     return y < boxes[0].top ? lines[0] : lines.at(-1);
   }
   document.addEventListener('pointermove', event => {
-    if (!drag?.anchor || !(event.buttons & 1)) return;
-    const target = lineAt(event.clientY);
-    if (target === drag.field) {
-      // Back in the line where the drag began: MathLive's own selection again.
-      if (allSelected && !span.all) setAllSelected(false, drag.field);
-      return;
-    }
-    setSpan(drag.anchor, { line: lines.indexOf(target), offset: offsetAtX(target, event.clientX) });
-    // While it has the drag, MathLive doesn't redraw the selection of the line it captured the drag
-    // in: every frame of the drag draws the spanning selection anew.
-    if (!drag.painting) {
-      drag.painting = true;
-      requestAnimationFrame(() => { if (drag) drag.painting = false; paintSpan({ redraw: true }); });
-    }
+    if (!drag || event.pointerId !== drag.pointerId || !(event.buttons & 1)) return;
+    dragTo(event.clientX, event.clientY);
   }, true);
-  document.addEventListener('pointerup', () => {
-    if (drag && allSelected) requestAnimationFrame(() => paintSpan({ redraw: true }));
-    drag = null;
+  document.addEventListener('pointerup', event => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    dragTo(event.clientX, event.clientY); // The release point is the end, even without a move to it.
+    const owned = drag.owned;
+    endDrag();
+    if (owned && allSelected) requestAnimationFrame(() => paintSpan({ redraw: true }));
   }, true);
+  // A gesture the system cancels, or a window left mid-drag, ends it; the selection stays as it is.
+  // (Our own cancel, sent to MathLive when taking a drag over, is not a real one.)
+  document.addEventListener('pointercancel', event => { if (event.isTrusted && event.pointerId === drag?.pointerId) endDrag(); }, true);
+  window.addEventListener('blur', endDrag);
   document.addEventListener('mousedown', event => {
     if (composing && !$('candidates').contains(event.target)) closeComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;

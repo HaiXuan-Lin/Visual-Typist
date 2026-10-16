@@ -4,3 +4,5 @@ node_modules/
 *.app
 .DS_Store
 *.log
+.site/
+_site/

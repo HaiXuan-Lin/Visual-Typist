@@ -1,163 +1,126 @@
 # Visual Typist
 
-A keyboard-first visual equation editor for macOS. Type math in a WYSIWYG canvas, insert
-structures from a symbol palette or with shortcuts, switch to the LaTeX code at any time,
-and export to PDF, PNG, SVG, LaTeX or MathML.
+Visual Typist is a visual LaTeX equation editor for macOS on Apple Silicon. You type math in a
+WYSIWYG canvas, with structures, slots and keyboard shortcuts like a classic equation editor, and
+the LaTeX code is always one keystroke away. It was inspired by earlier editors such as
+[MathType](https://www.wiris.com/en/mathtype/), [AxMath](https://www.axsoft.co/) and
+[VisualTeX](https://github.com/paulhe666/visualtex).
 
-- **Visual editing** on top, **symbol palette** below — or flip the bottom pane to the
-  **LaTeX code** (`⌃⇥`). Both stay in sync as you type.
-- **Structured editing like a classic equation editor:** a document of equation lines (↩ starts
-  a new line, ⌫ at the start of a line joins it to the one above; inside a script, a limit, a root
-  or a bracket ↩ turns the slot into an array and starts its next row); dragging the mouse selects
-  across lines; empty slots show as light-blue
-  blocks (in the LaTeX they are plain `{}`); ←/→ and ⇥ / ⇧⇥ walk the slots in order (∑ and ∫:
-  lower limit, upper limit, then the body); ↑/↓ move between slots (numerator ↔ denominator,
-  upper ↔ lower limit, matrix rows) and lines. ⌫ right after a structure (fraction, root,
-  bracket…) deletes it whole, contents and all; after scripts it deletes just the scripts and
-  keeps their base. ⌫ in an empty slot, or at the start of a filled one, selects the structure,
-  and a second ⌫ deletes it.
-- **Staggered indices:** as in classic editors each script is an element of its own after its
-  base, so a script added after scripts follows them — `a`, `⌘Q` `1`, `→`, `⌘L` `2` is written
-  `{a^{1}}_{2}`, and tensor indices sit apart (`T^{ab}{}_{c}`). → enters a script's subscript, ←
-  its superscript; the mouse selects whole elements (`a` with its first scripts, say).
-- **Templates and accents behave like a classic editor's buttons:** an accent (`⌘H` hat, `⌘D` dot,
-  `⌥T` vector…) applies to the symbol before the caret or to the selection; a template takes the
-  selection into its first slot and puts the caret in the next one (a selected expression
-  becomes the integrand of `⇧⌘I`, the lower limit of `⇧⌘S`, the numerator of `⌘F`).
-- **300+ symbols and templates** in 13 tabs: Greek, fractions & scripts, operators, relations,
-  symbols & fonts, accents, over/under braces, brackets (incl. bra–ket), integrals, large
-  operators, functions, matrices and arrows — integrals, operators and matrices in large,
-  display-style tiles.
-- **Brackets as in classic editors:** `(` `[` `{` insert a `\left…\right` pair with the caret
-  inside, or put the pair around the selection; at the end of a bracket's contents its closing
-  bracket steps out. ⌫ after an accent removes the accent (`\hat{V}` → `V`).
-- **Matching brackets** beside the caret are highlighted in the equation and in the LaTeX code
-  (`\left(` with `\right)`, `{` with `}`), and the same pair in the other pane.
-- **Selections** are made of whole elements; ⇧ with the arrows or a ⇧-click extends them across
-  lines, and a click elsewhere clears them.
-- **Typing as in classic editors:** function names become their commands (`sin` → `\sin`),
-  nothing else is converted; Space inserts `\,\,` (after a function name it only ends the name).
-- **Type commands like an input method.** Type `\` and a name (`\mu`, `\frac`, `\sum`…): a
-  candidate bar shows matching symbols and templates. `Space` takes the first, `1`–`8` pick one,
-  `↩` keeps the command as typed, `⎋` cancels, `,` `.` page through. Works in the LaTeX pane too.
-- **Shortcuts for everything.** Right-click any palette button to give it a shortcut, or edit
-  them all in *Settings › Keyboard Shortcuts* (`⌘,`).
-- **Light or dark:** follows the system until the toolbar's theme button picks one.
-- **Vector export** (PDF, SVG), PNG at 1×–4×, standalone LaTeX, MathML; copy as image or LaTeX.
-- Runs fully offline. Native Apple Silicon app for macOS 14 or later.
+**Try it right away in your browser: [haixuan-lin.github.io/Visual-Typist](https://haixuan-lin.github.io/Visual-Typist/)**
+— or [build the Mac app](#install) with one command.
 
-## Build and install
+![Visual Typist editing the Einstein field equations](Einstein-equation.png)
+
+Flip the bottom pane from the symbol palette to the LaTeX code at any time; the two stay in sync,
+and matching brackets are highlighted in both.
+
+![The Schrödinger equation with its LaTeX code](Schrodinger-equation.png)
+
+## Features
+
+- **Structured editing.** Fractions, roots, scripts, integrals, sums, brackets and matrices with
+  slots; ←/→, ↑/↓ and ⇥ move between them, and ⌫ deletes a structure as a whole, as in classic
+  equation editors. ↩ starts a new line (inside a script or a root it starts a new row).
+- **Commands as you type.** Type `\` and a name — `\mu`, `\frac`, `\sum` — and pick from a
+  candidate bar like an input method: `Space` takes the first, `1`–`8` pick one, `⎋` cancels.
+  Function names such as `sin` are recognized as you type.
+- **Brackets and accents.** `(` `[` `{` insert a matching `\left…\right` pair, or put it around the
+  selection. An accent applies to the symbol before the caret; ⌫ after it removes just the accent.
+- **Staggered indices.** Each script is an element of its own, so tensor indices sit apart:
+  `R^{\rho}{}_{\sigma\mu\nu}` is typed with `⌘Q`, `→`, `⌘L`.
+- **Selections** are made of whole elements; drag across lines, extend with ⇧ and the arrows or a
+  ⇧-click. Typing, paste, fonts and templates act on them.
+- **Shortcuts for everything.** Windows equation-editor habits carry over (Ctrl becomes ⌘, Alt
+  becomes ⌥). Right-click any palette button to give it a shortcut, or edit them all in
+  *Settings › Keyboard Shortcuts* (`⌘,`).
+- **Clean output.** Standard LaTeX (lines separated by `\\` on a line of their own), vector PDF and
+  SVG sized in points, PNG at 1×–4×, MathML. `⌘C` copies the selection as an image, `⌘T` as LaTeX.
+- **Native and offline.** A small Apple Silicon app for macOS 14 or later, with light and dark
+  themes. One document-wide undo history.
+
+## Install
+
+You need an Apple Silicon Mac with macOS 14 or later. In a terminal:
 
 ```sh
-./build.sh      # checks the toolchain, then builds "Visual Typist.app" in the current directory
-./install.sh    # copies it to /Applications
+git clone https://github.com/HaiXuan-Lin/Visual-Typist.git
+cd Visual-Typist
+./build.sh --install
 ```
 
-`build.sh` verifies the platform (Apple Silicon, macOS 14+), the Xcode Command Line Tools,
-Swift 6 and the bundled math engines. If something is missing it explains what and offers to
-install it (`--yes` accepts every offer, `--check` only checks). `install.sh --open` launches
-the app afterwards and `install.sh --uninstall` removes it.
+`build.sh` examines the build environment and repairs what it can before compiling: it installs or
+updates the Xcode Command Line Tools, accepts the Xcode license, fixes a broken developer-tools
+selection, checks the macOS SDK and disk space, clears a stale build cache, verifies the bundled
+math engines against their checksums (downloading them again with Node.js if they are damaged) and
+regenerates a missing icon. It asks before anything that needs your password or a download.
+`--install` then copies the app into `/Applications` and opens it.
+
+| Command | What it does |
+| --- | --- |
+| `./build.sh` | check and repair the environment, then build `Visual Typist.app` here |
+| `./build.sh --install` | … and install it into `/Applications` and open it |
+| `./build.sh --yes` | answer yes to every question (non-interactive, e.g. CI) |
+| `./build.sh --test` | run the unit tests before building |
+| `./build.sh --check` | only check (and repair) the environment |
+| `./install.sh` / `./install.sh --uninstall` | install an existing build / remove the app |
 
 The app is signed ad hoc for local use; it is not notarized.
 
 ## Keyboard shortcuts
 
-Shortcuts follow Windows equation-editor habits: **Ctrl becomes ⌘** and **Alt becomes ⌥**.
-Keys are matched by position, so `⌥K` works even though macOS would normally type `˚`.
+Keys are matched by position, so `⌥K` works even though macOS would normally type `˚`. While the
+equation has focus its shortcuts win over menu items with the same keys (`⌘Q` makes a superscript;
+quit from the app menu). New is `⇧⌘N`, Open `⇧⌘O`, Save As `⌥⇧⌘S`.
 
-While the equation has focus, its shortcuts win over menu items with the same keys — `⌘Q` makes
-a superscript and `⌘H` a wide hat, so quit or hide from the app menu (or reassign them). Menu
-commands that would collide moved: New is `⇧⌘N`, Open `⇧⌘O` and Save As `⌥⇧⌘S`. In the equation,
-`⌘C` copies the selection (or, with nothing selected, the whole equation) as an image (SVG, with
-PDF and PNG for apps that don't take SVG) and `⌘T` copies its LaTeX. `⌘A` selects every line: then
-typing, ⌫, paste or cut replace the document, a font (`⌘1`…`⌘9`, `⌘B`) applies to every line, and a
-template replaces several lines (within one line it goes after it) — as in classic equation editors.
-
-| Insert | Shortcut | | Insert | Shortcut |
+| Insert | Shortcut | | Editing | Shortcut |
 | --- | --- | --- | --- | --- |
-| γ | `⌥G` | | Fraction | `⌘F` |
-| ∞ | `⌘I` or `⌥I` | | Square root | `⌘R` |
-| μ / ν | `⌘M` / `⌘N` | | | |
-| π | `⌘P` | | Superscript | `⌘Q` |
-| ω | `⌘O` | | Subscript | `⌘E` or `⌘L` |
-| ψ | `⌥⇧P` | | Sub- and superscript | `⌘J` |
-| ∂ | `⇧⌘P` | | Integral with limits | `⇧⌘I` |
-| (▢\|▢) | `⌥9` | | Sum with limits | `⇧⌘S` |
-| ′ (prime) | `⌘'` | | Dot / double dot accent | `⌘D` / `⇧⌘D` |
-| ⟨▢\| (bra) | `⌥B` | | Hat | `⌘H` |
-| \|▢⟩ (ket) | `⌥K` | | Vector arrow | `⌥T` |
-
-| Editing | Shortcut |
-| --- | --- |
-| New line / join with the line above | `↩` / `⌫` at the start of a line |
-| Next / previous slot | `⇥` / `⇧⇥` |
-| Move up / down / left / right | `⌥W` `⌥S` `⌥A` `⌥D` (or the arrow keys) |
-| Move to start / end of line | `⌥Q` / `⌥L` |
-| Switch between symbols and LaTeX code | `⌃⇥` |
-| Apply the LaTeX code and return to the equation | `⇧↩` |
-| Type the next letter in Greek (⇧ for capitals) | `⌘G`, then a letter |
-| Font of the selection (or of the symbol before the caret): `\mathrm`, none, `\mathbf`, `\boldsymbol`, `\mathsf`, `\mathtt`, `\mathcal`, `\mathscr`, `\mathfrak` | `⌘1` … `⌘9` (also `⌘B` bold) |
-| Select all / delete the line (an empty line is removed) | `⌘A` / `⌘⌫` |
-| Matrix: insert row above / below, column before / after | `⌥↑` `⌥↓` `⌥←` `⌥→` |
-| Matrix: delete the row above / below, the column left / right | `⌥⌘↑` `⌥⌘↓` `⌥⌘←` `⌥⌘→` |
-| Undo / redo (the whole document, lines included) | `⌘Z` / `⇧⌘Z` or `⌘Y` |
-| Copy the selection (or everything) as image / as LaTeX | `⌘C` / `⌘T` |
-
-While the equation has focus, an active input method (Pinyin, Kana…) is switched to a Roman
-keyboard layout so letters arrive as math; your input method returns in the LaTeX pane, where
-you can type CJK text inside `\text{}`.
+| Fraction | `⌘F` | | New line / row in a slot | `↩` |
+| Square root | `⌘R` | | Next / previous slot | `⇥` / `⇧⇥` |
+| Superscript | `⌘Q` | | Select all / delete the line | `⌘A` / `⌘⌫` |
+| Subscript | `⌘L` or `⌘E` | | Undo / redo | `⌘Z` / `⇧⌘Z` or `⌘Y` |
+| Sub- and superscript | `⌘J` | | Copy as image / as LaTeX | `⌘C` / `⌘T` |
+| Integral / sum with limits | `⇧⌘I` / `⇧⌘S` | | Symbols ↔ LaTeX code | `⌃⇥` |
+| μ, ν, ∞, π, ω | `⌘M` `⌘N` `⌘I` `⌘P` `⌘O` | | Apply the code, back to the equation | `⇧↩` |
+| Hat, dot, double dot, vector | `⌘H` `⌘D` `⇧⌘D` `⌥T` | | Greek letter next | `⌘G`, then a letter |
+| (▢\|▢), bra, ket | `⌥9` `⌥B` `⌥K` | | Fonts: `\mathrm` … `\mathfrak` | `⌘1` … `⌘9` |
+| | | | Matrix: insert / delete row or column | `⌥` / `⌥⌘` + arrows |
 
 Your changes are saved to `~/Library/Application Support/Visual Typist/shortcuts.json`, layered
-over the defaults in [`keymap.js`](Sources/VisualTypist/Resources/Web/keymap.js). The file can be
-edited by hand (then choose *Reload Shortcuts File*):
+over the defaults in [`keymap.js`](Sources/VisualTypist/Resources/Web/keymap.js).
 
-```json
-{
-  "version": 1,
-  "shortcuts": {
-    "alt+k": { "insert": "ket" },
-    "ctrl+l": { "latex": "\\mathcal{L}" },
-    "ctrl+h": null
-  }
-}
-```
+## The browser edition
 
-A binding inserts a palette item by id (`insert`), arbitrary LaTeX with `#0`, `#1`… slots
-(`latex`), or runs an editor `command`; `null` removes a default.
-
-## Project layout
-
-```
-Sources/VisualTypist/          macOS app (SwiftUI + WebKit)
-  App/                         app entry point, window, menus
-  Document/                    per-window document session: open, save, export, clipboard
-  Editor/                      web view bridge, native shortcut handling, shortcut storage
-  Export/                      PDF / PNG / SVG / LaTeX / MathML export
-  Resources/Web/               editor UI: editor.js, palette.js, keymap.js, app.css
-    vendor/                    MathLive (editing) and MathJax (rendering, export)
-Sources/VisualTypistCore/      document format, LaTeX import, key combos
-Tests/VisualTypistCoreTests/   unit tests
-scripts/                       test runner, vendor update, icon generator
-```
-
-Documents are saved as `.vteq` (JSON with the LaTeX source and display settings). In the LaTeX
-the equation lines are separated by `\\` on a line of its own (as classic editors write it; `\\` at
-the end of a line is read too); multi-line documents export as a left-aligned array, blank
-lines between equations included. Sizes are in points: an SVG or PDF at 32 pt is as large as 32 pt text. The app also
-opens `.tex`, `.latex` and `.txt` files containing a single equation.
+The [website](https://haixuan-lin.github.io/Visual-Typist/) runs the same editor in a browser.
+Open, save (`.vteq`), copy LaTeX or an image, and export SVG, PNG, LaTeX or MathML work there too;
+PDF export, rich clipboard images and keeping your input method out of the way are the app's. On
+Windows and Linux, use Ctrl for ⌘ and Alt for ⌥ (some combinations, such as Ctrl+N or Ctrl+W,
+belong to the browser).
 
 ## Development
 
 ```sh
 swift build                  # debug build
 ./scripts/test.sh            # unit tests (works with Xcode or the Command Line Tools)
+./scripts/build-site.sh      # assemble the website into .site (python3 -m http.server --directory .site)
 ./scripts/update-vendor.sh   # refresh MathLive / MathJax to the versions in package.json
 ```
 
-The editor UI is a plain web page: serve `Sources/VisualTypist/Resources/Web` with any static
-file server to work on it in a browser.
+```
+Sources/VisualTypist/          macOS app (SwiftUI + WebKit): window, menus, export, clipboard
+  Resources/Web/               the editor: editor.js, palette.js, keymap.js, app.css
+    vendor/                    MathLive (editing) and MathJax (rendering, export)
+Sources/VisualTypistCore/      document format, LaTeX import, key combos
+Tests/VisualTypistCoreTests/   unit tests
+site/                          the website's landing page (published by .github/workflows/pages.yml)
+scripts/                       tests, website, vendor update and patches, icon generator
+```
+
+The editor is a plain web page, so it can be worked on in a browser: serve
+`Sources/VisualTypist/Resources/Web` with any static file server. Documents are saved as `.vteq`
+(JSON with the LaTeX source and display settings); the app also opens `.tex`, `.latex` and `.txt`
+files containing an equation.
 
 ## License
 
-[MIT](LICENSE). Bundled third-party components are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Visual Typist bundles [MathLive](https://mathlive.io) and
+[MathJax](https://www.mathjax.org); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
