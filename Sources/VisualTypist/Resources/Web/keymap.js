@@ -33,6 +33,7 @@ window.VT_DEFAULT_KEYMAP = {
   'alt+t': { insert: 'vec' },
   'alt+b': { insert: 'bra' },
   'alt+k': { insert: 'ket' },
+  'alt+,': { insert: 'braket-op' },
   'alt+9': { insert: 'paren-mid' },
   'cmd+shift+i': { insert: 'int-limits' },
   'cmd+shift+s': { insert: 'sum-limits' },

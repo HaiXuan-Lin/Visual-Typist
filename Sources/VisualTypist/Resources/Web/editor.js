@@ -829,6 +829,16 @@
     }
     .ML__focused .vt-slot.vt-slot-active { background-image: linear-gradient(var(--vt-slot-active), var(--vt-slot-active)) !important; }
     .vt-slot-selected .ML__selection { display: none !important; }
+    /* Outside a slot the caret extends above and below its block; inside, only the short
+       slot caret below is shown. Both scale with the local font size, including scripts. */
+    .ML__caret::after { height: 1em; bottom: -.15em; transform: scaleY(1.25); transform-origin: center; }
+    /* A filled slot is still inside its structure. Keep its caret at the body's height,
+       below an overline, instead of extending it through the decoration like an outer caret. */
+    .vt-inside-structure .ML__caret::after { height: .58em; bottom: -.02em; left: -.08em; transform: none; }
+    /* Leaving a structure (e.g. an overline) moves the caret visibly to its right and
+       lengthens it further. Scaling changes only the drawing, not the equation's layout. */
+    .vt-after-structure .ML__caret::after { left: .12em; transform: scaleY(1.5); }
+    .vt-slot-selected .ML__caret::after { display: none; }
     .vt-match { background: var(--bracket-match); border-radius: 2px; }
     /* A selection with scripts is drawn by us (see drawScriptSelection), MathLive's being too large. */
     .vt-own-selection .ML__selection { display: none !important; }
@@ -860,16 +870,16 @@
     const shown = model && !model.selectionIsCollapsed && !model.selectionIsPlaceholder &&
       (field.hasFocus() || container.classList.contains('vt-all-selected'));
     const [start, end] = shown ? [...model.selection.ranges[0]].sort((a, b) => a - b) : [0, 0];
-    const first = shown ? model.at(start + 1) : null;
     const last = shown ? model.at(end) : null;
     const selected = [];
-    if (first && last && first.parent === last.parent) {
-      for (let atom = first; atom; atom = atom.rightSibling) {
-        selected.push(atom);
-        if (atom === last) break;
-      }
+    // Offsets visit children before their owner: start + 1 can be inside a selected group
+    // or script. Walk siblings backward from the end to recover the selected row's atoms.
+    for (let atom = last; atom && atom.type !== 'first' && model.offsetOf(atom) > start; atom = atom.leftSibling) {
+      selected.push(atom);
     }
-    const own = selected.some(isScripts);
+    selected.reverse();
+    if (selected.length && atomRange(model, selected[0])[0] !== start) selected.length = 0;
+    const own = selected.some(atom => isScripts(atom) || (atom.children ?? []).some(isScripts));
     if (container.classList.contains('vt-own-selection') !== own) container.classList.toggle('vt-own-selection', own);
     if (!own) return;
     const origin = content.getBoundingClientRect();
@@ -877,6 +887,9 @@
       let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
       for (const part of [atom, ...(atom.children ?? [])]) {
         if (part.type === 'first' || !part.id) continue;
+        // Group/script frames can also span following scripts. Their contents supply the
+        // visible bounds without including the unselected structure to the right.
+        if ((part.type === 'group' || isScripts(part)) && part.children?.length) continue;
         for (const element of content.querySelectorAll(`[data-atom-id="${part.id}"]`)) {
           const box = element.getBoundingClientRect();
           if (!box.width || !box.height) continue;
@@ -892,12 +905,17 @@
     }
   }
 
-  /** Marks MathLive's placeholder glyphs (▢) so the stylesheet above can repaint them. */
+  /** Marks placeholder glyphs and the caret outside a structure for the stylesheet above. */
   function tagSlots(field) {
     // "Active" only when the selection is exactly one slot, not a larger selection containing slots.
-    const slotSelected = !!fieldModel(field)?.selectionIsPlaceholder;
+    const model = fieldModel(field);
+    const slotSelected = !!model?.selectionIsPlaceholder;
+    const here = model?.selectionIsCollapsed ? model.at(model.position) : null;
     // A class rather than :has(), which WebKit does not re-evaluate inside MathLive's shadow root.
-    field.shadowRoot.querySelector('.ML__container')?.classList.toggle('vt-slot-selected', slotSelected);
+    const container = field.shadowRoot.querySelector('.ML__container');
+    container?.classList.toggle('vt-slot-selected', slotSelected);
+    container?.classList.toggle('vt-inside-structure', !!(here?.parent && !here.parent.isRoot));
+    container?.classList.toggle('vt-after-structure', isStructure(here));
     for (const element of field.shadowRoot.querySelectorAll('.ML__content span')) {
       const isSlot = element.childElementCount === 0 && element.textContent === '▢';
       element.classList.toggle('vt-slot', isSlot);
@@ -1260,7 +1278,10 @@
     const to = inRow(last);
     if (!from || !to) return;
     const range = [atomRange(model, from)[0], model.offsetOf(to)];
-    if (range[0] !== start || range[1] !== end) mathfield.selection = { ranges: [range] };
+    if (range[0] !== start || range[1] !== end) {
+      const direction = model.position < model.anchor ? 'backward' : 'forward';
+      mathfield.selection = { ranges: [range], direction };
+    }
   }
 
   /** A caret just before or after an empty slot's placeholder selects it (the slot is one unit). */
@@ -1424,6 +1445,25 @@
     return true;
   }
 
+  /** ⇧← / ⇧→ select whole elements in the current row, keeping the anchor when reversing. */
+  function extendHorizontally(direction) {
+    const model = fieldModel();
+    if (!model || model.selectionIsPlaceholder) return false;
+    const here = model.at(model.position);
+    const anchor = model.at(model.anchor);
+    // At a slot boundary, MathLive handles leaving the slot; selectWholeAtoms widens that
+    // selection to the containing structure while retaining its direction.
+    if (!here || !anchor || here.parent !== anchor.parent || !sameBranch(here.parentBranch, anchor.parentBranch)) return false;
+    const atom = direction > 0 ? here.rightSibling : here;
+    if (!atom || atom.type === 'first') return false;
+    const focus = direction > 0 ? model.offsetOf(operandOf(atom) ?? atom) : atomRange(model, atom)[0];
+    mathfield.selection = {
+      ranges: [[Math.min(model.anchor, focus), Math.max(model.anchor, focus)]],
+      direction: focus < model.anchor ? 'backward' : 'forward',
+    };
+    return true;
+  }
+
   /**
    * ← / →: move by one step in slot order. A selected placeholder is a caret inside its empty slot;
    * moving onto an empty slot selects its placeholder so typing replaces it; at the end of a line
@@ -1446,7 +1486,9 @@
     };
     if (direction > 0) {
       const next = here.rightSibling;
-      if (isMiddle(next)) { mathfield.position = model.offsetOf(here.parent); return true; } // Out of the bracket.
+      // A middle delimiter separates slots within the same bracket. Cross it into the
+      // next slot; moveCaretTo selects its placeholder when that slot is empty.
+      if (isMiddle(next)) { moveCaretTo(model.offsetOf(next)); return true; }
       if (next) {
         if (next.type === 'placeholder') selectPlaceholderAt(model.offsetOf(next));
         else if (isStructure(next)) enterSlot(next, slotOrder(next)[0], false);
@@ -1464,7 +1506,8 @@
       else mathfield.position = model.offsetOf(owner);
       return true;
     }
-    if (isMiddle(here)) { mathfield.position = model.offsetOf(here.parent.leftSibling); return true; } // Out of the bracket.
+    // From a slot's start, cross its delimiter back to the preceding slot's end.
+    if (isMiddle(here)) { moveCaretTo(model.offsetOf(here.leftSibling)); return true; }
     if (here.type !== 'first') {
       if (here.type === 'placeholder') selectPlaceholderAt(model.offsetOf(here));
       else if (isStructure(here)) enterSlot(here, slotOrder(here).at(-1), true);
@@ -1488,7 +1531,15 @@
     const atom = caretAtom(model);
     const owner = atom?.parent;
     if (!owner || owner.isRoot) {
-      mathfield.executeCommand(direction > 0 ? 'moveToNextPlaceholder' : 'moveToPreviousPlaceholder');
+      // MathLive's placeholder command moves DOM focus to a button when no slot remains.
+      // Search this equation ourselves; Tab stays here when there is no next/previous slot.
+      const range = model.selection.ranges[0];
+      const edge = direction > 0 ? Math.max(...range) : Math.min(...range);
+      for (let offset = edge + direction; offset >= 0 && offset <= model.lastOffset; offset += direction) {
+        if (model.at(offset)?.type !== 'placeholder') continue;
+        selectPlaceholderAt(offset);
+        break;
+      }
       return true;
     }
     if (hasMiddle(owner)) {
@@ -1532,11 +1583,21 @@
   function moveVertically(direction) {
     const model = fieldModel();
     if (!model || (!model.selectionIsCollapsed && !model.selectionIsPlaceholder)) return false;
+    // Right after scripts, ↑ / ↓ enter the upper / lower slot from its end. A subsup atom
+    // may have no element of its own, so this must precede the geometry-based navigation.
+    const here = model.at(model.position);
+    if (model.selectionIsCollapsed) {
+      const branch = direction < 0 ? 'superscript' : 'subscript';
+      const atoms = branchAtoms(here, branch);
+      if (atoms.length) {
+        moveCaretTo(model.offsetOf(atoms.at(-1)));
+        return true;
+      }
+    }
     const origin = caretPoint(model, model.position);
     if (!origin) return false;
     // Rows that enclose the caret (e.g. the line around a fraction, seen from its numerator) are
     // considered only when no slot lies in that direction, so ↓ in a numerator reaches the denominator.
-    const here = model.at(model.position);
     const enclosing = new Set();
     for (let atom = here.parent?.parent; atom; atom = atom.parent) enclosing.add(atom);
     // Inside the structures of the caret's own row (the √ just left of it, say) a position counts
@@ -1694,7 +1755,7 @@
   /** Handles the keys whose behavior follows classic equation editors. Returns true if handled. */
   function handleEditingKey(event, key) {
     const model = fieldModel();
-    if (!model) return false;
+    if (!model) return key === 'tab'; // Keep Tab in the equation even while its model is unavailable.
     const index = lines.indexOf(mathfield);
     const collapsed = model.selectionIsCollapsed;
     const shift = event.shiftKey;
@@ -1727,7 +1788,7 @@
         return true; // With nothing above or below, the caret stays where it is.
       case 'left':
       case 'right':
-        return shift ? false : moveHorizontally(key === 'right' ? 1 : -1);
+        return shift ? extendHorizontally(key === 'right' ? 1 : -1) : moveHorizontally(key === 'right' ? 1 : -1);
       default:
         return false;
     }
@@ -2156,7 +2217,10 @@
         const name = /^\\([a-zA-Z]+)/.exec(item.latex)?.[1];
         if (!name) continue;
         const label = item.latex.replace(/#[@0-9?]/g, '').replace(/\s+/g, '');
-        add({ name, label, item, preview: previewLatex(item) });
+        // Typed commands insert templates with editable slots. Applying an accent to the
+        // preceding symbol belongs to the palette/shortcut action, not command completion.
+        const commandItem = item.accent ? { ...item, accent: false } : item;
+        add({ name, label, item: commandItem, preview: previewLatex(item) });
       }
     }
     for (const name of VT_COMMANDS) add({ name, label: `\\${name}`, latex: `\\${name}`, preview: `\\${name}` });
