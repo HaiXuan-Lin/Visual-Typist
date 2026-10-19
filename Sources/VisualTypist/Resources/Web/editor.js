@@ -174,7 +174,7 @@
 
   // Commands that act on a ⌘A selection themselves; any other command ends it first.
   const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
-    'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur']);
+    'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur', 'fontBlackboard']);
 
   function runShortcut(combo) {
     const binding = keymap[normalizeCombo(combo)];
@@ -238,6 +238,8 @@
     const hadSelection = !model.selectionIsCollapsed && !model.selectionIsPlaceholder;
     if (item.accent) return applyAccent(item.latex, model, hadSelection);
     insertLatex(item.latex);
+    const bold = /^\\(boldsymbol|mathbf)\{#0\}$/.exec(item.latex)?.[1];
+    if (bold && fieldModel()?.selectionIsPlaceholder) boldSlots.set(caretAtom(fieldModel()), bold);
     const target = hadSelection ? item.caretWithSelection : item.caret;
     if (target) placeCaretInOperator(target);
     // The selection filled the only slot: keep the caret at the end of that slot.
@@ -299,7 +301,7 @@
   }
 
   const FONT_COMMANDS = new Set(['mathrm', 'mathit', 'mathbf', 'boldsymbol', 'bm', 'mathsf', 'mathtt', 'mathcal',
-    'mathscr', 'mathfrak', 'mathbfit', 'mathnormal']);
+    'mathscr', 'mathfrak', 'mathbb', 'mathbfit', 'mathnormal']);
 
   /** Removes font commands (\mathbf{…}, \mathcal{…}…) from LaTeX, keeping their contents. */
   function stripFonts(latex) {
@@ -466,6 +468,7 @@
     fontCalligraphic: () => setFont('mathcal'),
     fontScript: () => setFont('mathscr'),
     fontFraktur: () => setFont('mathfrak'),
+    fontBlackboard: () => setFont('mathbb'),
     removeRowAbove: () => removeNeighbor('row', -1),
     removeRowBelow: () => removeNeighbor('row', 1),
     removeColumnLeft: () => removeNeighbor('column', -1),
@@ -496,6 +499,7 @@
     fontBoldSymbol: 'Font: bold symbol (\\boldsymbol)', fontSans: 'Font: sans serif (\\mathsf)',
     fontMono: 'Font: typewriter (\\mathtt)', fontCalligraphic: 'Font: calligraphic (\\mathcal)',
     fontScript: 'Font: script (\\mathscr)', fontFraktur: 'Font: fraktur (\\mathfrak)',
+    fontBlackboard: 'Font: blackboard bold (\\mathbb)',
     removeRowAbove: 'Matrix: delete the row above', removeRowBelow: 'Matrix: delete the row below',
     removeColumnLeft: 'Matrix: delete the column on the left', removeColumnRight: 'Matrix: delete the column on the right',
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
@@ -933,7 +937,10 @@
       field.style.cssText = 'position:fixed;left:-10000px;top:0;width:400px;';
     } else {
       field.setAttribute('aria-label', 'Equation line');
-      field.addEventListener('input', syncFromField);
+      field.addEventListener('input', () => {
+        applySlotStyle(field);
+        syncFromField();
+      });
       field.addEventListener('selection-change', () => {
         // While a selection spans lines, MathLive may still move the selection of the line it captured
         // the drag in (above the line, its hit test can fall back on the anchor and collapse it):
@@ -1284,6 +1291,77 @@
     }
   }
 
+  /**
+   * The caret's row when it is in an empty row of a one-column matrix (a column vector, or the
+   * stacked lines of \begin{array}{c}), as classic editors treat such rows like lines.
+   */
+  function emptyColumnRow(model, atom) {
+    const array = atom?.parent;
+    if (array?.type !== 'array' || array.colCount !== 1 || !Array.isArray(atom.parentBranch)) return null;
+    if (!model.selectionIsCollapsed && !model.selectionIsPlaceholder) return null;
+    if (!isSlotEmpty(array, atom.parentBranch)) return null;
+    return { array, row: atom.parentBranch[0] };
+  }
+
+  /**
+   * Deletes row `row` of a one-column matrix; the caret goes to the end of the row above (direction
+   * -1, Backspace) or the start of the row below (+1, Delete). A matrix left with one cell gives way
+   * to its content, inside the matrix's own delimiters if it has any: \left(X\right).
+   */
+  function deleteColumnRow(array, row, direction) {
+    let model = fieldModel();
+    moveCaretTo(model.offsetOf(branchAtoms(array, [row, 0]).at(-1)));
+    mathfield.executeCommand('removeRow');
+    model = fieldModel();
+    if (array.rowCount === 1) {
+      const cell = branchAtoms(array, [0, 0]).filter(atom => atom.type !== 'first');
+      const content = cell.length ? mathfield.getValue(model.offsetOf(cell[0]) - 1, model.offsetOf(cell.at(-1)), 'latex') : '';
+      const delimited = array.leftDelim && array.leftDelim !== '.';
+      const latex = delimited ? `\\left${array.leftDelim}${content || '\\placeholder{}'}\\right${array.rightDelim || '.'}` : content;
+      mathfield.selection = { ranges: [atomRange(model, array)] };
+      mathfield.insert(latex || '\\placeholder{}', { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+      if (delimited) moveCaretTo(mathfield.position - 1); // Inside the brackets, after the content.
+    } else {
+      const target = branchAtoms(array, [direction < 0 ? row - 1 : row, 0]);
+      moveCaretTo(model.offsetOf(direction < 0 ? target.at(-1) : target[0]));
+    }
+    syncFromField();
+  }
+
+  /**
+   * MathLive keeps a font command's slot (\mathbb{▢}, \mathcal{▢}…) as a placeholder carrying the font,
+   * and a character typed over it loses that font. The font of the slot about to be typed over is
+   * noted on keydown and given to the character once it is in.
+   */
+  const FONT_KEYS = ['variant', 'variantStyle'];
+  let slotStyle = null;
+  // \boldsymbol{▢} and \mathbf{▢} slots carry the same style, so their command is remembered on insertion.
+  const boldSlots = new WeakMap();
+  const BOLD_SLOT_FONTS = {
+    boldsymbol: { variant: 'main', variantStyle: 'bold' },
+    mathbf: { variant: 'normal', variantStyle: 'bold' },
+  };
+
+  function noteSlotStyle(event) {
+    slotStyle = null;
+    if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey) return;
+    const model = fieldModel();
+    if (!model?.selectionIsPlaceholder || !lines.some(field => event.composedPath().includes(field))) return;
+    const style = caretAtom(model)?.style ?? {};
+    const font = BOLD_SLOT_FONTS[boldSlots.get(caretAtom(model))] ??
+      Object.fromEntries(FONT_KEYS.filter(key => style[key]).map(key => [key, style[key]]));
+    if (Object.keys(font).length) slotStyle = { field: mathfield, font };
+  }
+
+  function applySlotStyle(field) {
+    if (slotStyle?.field !== field) return;
+    const { font } = slotStyle;
+    slotStyle = null;
+    const model = fieldModel(field);
+    const position = model?.position ?? 0;
+    if (position > 0 && model.at(position)?.type !== 'first') field.applyStyle(font, { range: [position - 1, position] });
+  }
+
   /** A caret just before or after an empty slot's placeholder selects it (the slot is one unit). */
   function selectAdjacentPlaceholder() {
     const model = fieldModel();
@@ -1398,6 +1476,12 @@
         moveCaretTo(model.offsetOf(atom.leftSibling));
         return true;
       }
+    }
+
+    // In an empty row of a one-column matrix (below the first): the row goes, like an empty line.
+    if (emptyColumnRow(model, atom)?.row > 0) {
+      deleteColumnRow(atom.parent, atom.parentBranch[0], -1);
+      return true;
     }
 
     // At the start of a filled slot: select the structure (a second Backspace deletes it).
@@ -1689,14 +1773,22 @@
 
   /**
    * ↩ inside a slot, as in classic editors: a script, a limit, a root or a bracket becomes an array
-   * whose next row gets the caret (in an array, another row is added); a fraction's or an
-   * operand's slot takes no new row. Returns true (the key is used either way).
+   * whose rows are the slot's contents before and after the caret (in a one-column array the row
+   * splits the same way; in a wider one another row is added). The caret goes to the second row,
+   * or stays in the first when nothing came before it. A fraction's or an operand's slot takes no
+   * new row. Returns true (the key is used either way).
    */
   function slotRows(model) {
     const atom = caretAtom(model);
     let owner = atom.parent;
+    // A part with nothing in it (or only an empty slot) is one empty slot.
+    const part = (from, to) => {
+      const latex = withoutPlaceholders(from < to ? mathfield.getValue(from, to, 'latex') : '');
+      return latex.replace(/\{\}|\s/g, '') ? latex : '\\placeholder{}';
+    };
     if (owner.type === 'array') {
-      mathfield.executeCommand('addRowAfter');
+      if (owner.colCount === 1 && Array.isArray(atom.parentBranch)) splitColumnRow(model, owner, atom.parentBranch[0], part);
+      else mathfield.executeCommand('addRowAfter');
       syncFromField();
       return true;
     }
@@ -1707,18 +1799,41 @@
     const start = model.offsetOf(slot.boundary);
     const end = slot.atoms.length ? model.offsetOf(slot.atoms.at(-1)) : start;
     const caret = model.selectionIsPlaceholder ? end : model.position;
-    const part = (from, to) => withoutPlaceholders(from < to ? mathfield.getValue(from, to, 'latex') : '') || '\\placeholder{}';
+    const firstEmpty = part(start, caret) === '\\placeholder{}';
     const align = owner.type === 'surd' ? 'l' : 'c';
     const rows = `\\begin{array}{${align}}${part(start, caret)}\\\\${part(caret, end)}\\end{array}`;
     mathfield.selection = { ranges: [[start, end]] };
     mathfield.insert(rows, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
-    // The caret goes to the start of the second row.
     const after = fieldModel();
     let array = after.at(after.position);
     while (array && array.type !== 'array') array = array.leftSibling?.type === 'array' ? array.leftSibling : array.parent;
-    if (array) moveCaretTo(after.offsetOf(branchAtoms(array, [1, 0])[0]));
+    if (array) moveCaretTo(after.offsetOf(branchAtoms(array, [firstEmpty ? 0 : 1, 0])[0]));
     syncFromField();
     return true;
+  }
+
+  /** Splits row `row` of a one-column array at the caret into two rows (see slotRows). */
+  function splitColumnRow(model, array, row, part) {
+    const cell = branchAtoms(array, [row, 0]);
+    const start = model.offsetOf(cell[0]);
+    const end = model.offsetOf(cell.at(-1));
+    const caret = model.selectionIsPlaceholder ? end : model.position;
+    const before = part(start, caret);
+    const rest = part(caret, end);
+    if (rest !== '\\placeholder{}') {
+      mathfield.selection = { ranges: [[caret, end]] };
+      mathfield.executeCommand('deleteBackward');
+    }
+    moveCaretTo(fieldModel().offsetOf(branchAtoms(array, [row, 0]).at(-1)));
+    mathfield.executeCommand('addRowAfter');
+    let next = fieldModel();
+    moveCaretTo(next.offsetOf(branchAtoms(array, [row + 1, 0])[0]));
+    if (rest !== '\\placeholder{}') {
+      mathfield.insert(rest, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+      next = fieldModel();
+    }
+    if (before === '\\placeholder{}') moveCaretTo(next.offsetOf(branchAtoms(array, [row, 0])[0]));
+    else moveCaretTo(next.offsetOf(branchAtoms(array, [row + 1, 0])[0]));
   }
 
   const BRACKETS = {
@@ -1773,12 +1888,18 @@
         // Right after a function name (sin, typed or chosen) a space only ends the name, as in classic editors.
         if (shift || !collapsed) return false;
         return FUNCTION_NAMES.has(model.at(model.position)?.command?.slice(1));
-      case 'forwarddelete':
+      case 'forwarddelete': {
+        const empty = emptyColumnRow(model, caretAtom(model));
+        if (empty && empty.row < empty.array.rowCount - 1) {
+          deleteColumnRow(empty.array, empty.row, 1);
+          return true;
+        }
         if (collapsed && model.position === mathfield.lastOffset && index < lines.length - 1) {
           mergeLines(index, index + 1);
           return true;
         }
         return false;
+      }
       case 'tab':
         return moveToSlot(shift ? -1 : 1);
       case 'up':
@@ -2230,6 +2351,18 @@
     }
     const common = new Map(VT_COMMON_COMMANDS.map((name, index) => [name, index]));
     entries.forEach((entry, index) => { entry.rank = common.has(entry.name) ? common.get(entry.name) - 1000 : index; });
+    // How a candidate stands among those with its name: the command itself first (\mathbb{▢}, or a
+    // command that takes no argument such as \lim), then templates with script slots (\sum_{▢}^{▢}{▢}),
+    // then filled-in variants (\mathbb{R}); a bare command that needs an argument comes last.
+    const shape = entry => (entry.item?.latex ?? entry.latex).replace(/#[@0-9?]/g, '').replace(/\s+/g, '');
+    const takesArgument = new Set(entries.filter(entry => /^\\[a-zA-Z]+(\[\])?(\{\})+$/.test(shape(entry))).map(entry => entry.name));
+    for (const entry of entries) {
+      const form = shape(entry);
+      if (form === `\\${entry.name}`) entry.kind = takesArgument.has(entry.name) ? 3 : 0;
+      else if (/^\\[a-zA-Z]+(\[\])?(\{\})+$/.test(form)) entry.kind = 0;
+      else if (/^\\[a-zA-Z]+([_^]?\{\})+$/.test(form)) entry.kind = 1;
+      else entry.kind = 2;
+    }
     return entries;
   }
 
@@ -2240,9 +2373,6 @@
   }
 
   /** Candidates for `query` (the letters after \): exact, prefix, contains, subsequence, then first letter. */
-  // Of two candidates with one name, the bare command (\lim) comes before the template (\lim_{▢\to▢}▢).
-  const isTemplate = entry => ((entry.item?.latex ?? entry.latex ?? '').includes('#') ? 1 : 0);
-
   function candidatesFor(query) {
     commandIndex ??= buildCommandIndex();
     if (!query) return commandIndex.filter(entry => entry.rank < 0).sort((a, b) => a.rank - b.rank);
@@ -2262,7 +2392,7 @@
     const shown = new Set();
     return commandIndex.map(entry => ({ entry, tier: tier(entry) }))
       .filter(match => match.tier < Infinity)
-      .sort((a, b) => a.tier - b.tier || isTemplate(a.entry) - isTemplate(b.entry) || a.entry.rank - b.entry.rank ||
+      .sort((a, b) => a.tier - b.tier || a.entry.kind - b.entry.kind || a.entry.rank - b.entry.rank ||
         a.entry.name.length - b.entry.name.length)
       .filter(({ entry, tier: level }) => {
         if (level === 0) return true;
@@ -2435,12 +2565,14 @@
     else insertLatex(entry.latex);
   }
 
-  /** Enter: the command as typed if it exists, otherwise the best candidate (nothing for a lone backslash). */
+  /**
+   * Enter: the command as typed if it exists (in its own form: \mathbb{▢}, not \mathbb{R}), otherwise
+   * the best candidate (nothing for a lone backslash).
+   */
   function commitTyped() {
     const state = composing;
     if (!state) return;
-    const exact = state.list.find(entry => entry.name === state.text && entry.latex === `\\${state.text}`)
-      ?? state.list.find(entry => entry.name === state.text);
+    const exact = state.list.find(entry => entry.name === state.text);
     if (exact) return chooseCandidate(exact);
     if (state.text && state.list.length) return chooseCandidate(state.list[0]);
     closeComposition();
@@ -2818,6 +2950,7 @@
       event.stopImmediatePropagation();
       return;
     }
+    noteSlotStyle(event);
     // Typed ^ and _ make scripts the way the script shortcuts do.
     if ((event.key === '^' || event.key === '_') && !event.metaKey && !event.ctrlKey && !event.altKey &&
         lines.some(field => event.composedPath().includes(field)) &&

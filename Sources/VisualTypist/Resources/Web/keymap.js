@@ -70,6 +70,7 @@ window.VT_DEFAULT_KEYMAP = {
   'cmd+7': { command: 'fontCalligraphic' },
   'cmd+8': { command: 'fontScript' },
   'cmd+9': { command: 'fontFraktur' },
+  'cmd+0': { command: 'fontBlackboard' },
   'alt+up': { command: 'addRowBefore' },
   'alt+down': { command: 'addRowAfter' },
   'alt+left': { command: 'addColumnBefore' },
