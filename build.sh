@@ -19,7 +19,7 @@ set -euo pipefail
 readonly APP_NAME="Visual Typist"
 readonly EXECUTABLE="VisualTypist"
 readonly BUNDLE_ID="io.github.visualtypist.VisualTypist"
-readonly VERSION="1.13.1"
+readonly VERSION="1.14.0"
 readonly MIN_MACOS="14.0"
 readonly MIN_SDK="14.0"
 readonly MIN_SWIFT="6.0"
