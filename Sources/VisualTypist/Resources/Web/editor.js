@@ -1230,11 +1230,41 @@
     return true;
   }
 
+  /**
+   * An empty matrix cell is written {} and comes back as an empty group, so what is typed there
+   * would stay braced ({a}\\ {b}); such a cell is given a plain slot instead.
+   */
+  function ungroupCells(field = mathfield) {
+    const model = fieldModel(field);
+    const Placeholder = placeholderClass();
+    if (!model || !Placeholder || restoringPlaceholders) return false;
+    const empty = model.atoms.filter(atom => atom.type === 'group' && atom.parent?.type === 'array' &&
+      Array.isArray(atom.parentBranch) && !atom.branches.some(branch => SCRIPT_BRANCHES.includes(branch)) &&
+      isSlotEmpty(atom, 'body') && branchAtoms(atom.parent, atom.parentBranch).length === 2);
+    if (!empty.length) return false;
+    const [start, end] = model.selection.ranges[0];
+    const selected = field === mathfield && model.selectionIsPlaceholder ? model.at(Math.max(start, end)) : null;
+    let select = null;
+    for (const group of empty) {
+      const slot = new Placeholder();
+      if (selected?.parent === group) select = slot;
+      group.parent.setCell(group.parentBranch[0], group.parentBranch[1], [slot]);
+    }
+    restoringPlaceholders = true;
+    try {
+      model.contentDidChange({ inputType: 'insertText' });
+      if (select) selectPlaceholderAt(model.offsetOf(select));
+    } finally {
+      restoringPlaceholders = false;
+    }
+    return true;
+  }
+
   function restorePlaceholders(field = mathfield) {
     const model = fieldModel(field);
     const Placeholder = placeholderClass();
     if (!model || !Placeholder || restoringPlaceholders) return false;
-    const grouped = flattenScriptGroups(field) | groupOperands(field);
+    const grouped = flattenScriptGroups(field) | ungroupCells(field) | groupOperands(field);
     const collapsed = model.selectionIsCollapsed;
     if (field === mathfield && !collapsed) return grouped;
     const anchor = model.at(model.position);
@@ -1637,6 +1667,7 @@
     const model = fieldModel();
     if (!model) return false;
     const atom = caretAtom(model);
+    if (moveToCell(model, atom, direction)) return true;
     const owner = atom?.parent;
     if (!owner || owner.isRoot) {
       // MathLive's placeholder command moves DOM focus to a button when no slot remains.
@@ -1676,6 +1707,34 @@
       const outer = operator ?? owner;
       mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(outer.leftSibling);
     }
+    return true;
+  }
+
+  /**
+   * Tab / Shift-Tab in a matrix or array cell: the next or previous cell, row by row; past the last
+   * (or before the first) cell the caret leaves the array. An empty cell's slot is selected, a
+   * filled cell gets the caret at its end. Returns false when the caret is not directly in a cell.
+   */
+  function moveToCell(model, atom, direction) {
+    // Directly in a cell, or in the empty {} group that stands for an empty cell.
+    const inCell = atom?.parent?.type === 'array' ? atom : atom?.parent?.type === 'group' && atom.parent.parent?.type === 'array' ? atom.parent : null;
+    if (!inCell || !Array.isArray(inCell.parentBranch)) return false;
+    const array = inCell.parent;
+    const cells = [];
+    for (let row = 0; row < array.rowCount; row += 1) {
+      for (let col = 0; col < array.colCount; col += 1) if (branchAtoms(array, [row, col]).length) cells.push([row, col]);
+    }
+    const [row, col] = inCell.parentBranch;
+    const target = cells[cells.findIndex(([r, c]) => r === row && c === col) + direction];
+    if (!target) {
+      mathfield.position = direction > 0 ? model.offsetOf(array) : model.offsetOf(array.leftSibling);
+      return true;
+    }
+    const atoms = branchAtoms(array, target);
+    const group = atoms.length === 2 && atoms[1].type === 'group' && isSlotEmpty(atoms[1], 'body') ? atoms[1] : null;
+    const slot = (group ? branchAtoms(group, 'body') : atoms).find(child => child.type === 'placeholder');
+    if (slot) selectPlaceholderAt(model.offsetOf(slot));
+    else moveCaretTo(model.offsetOf(atoms.at(-1)));
     return true;
   }
 
