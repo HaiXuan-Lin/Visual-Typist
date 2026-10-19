@@ -1090,6 +1090,30 @@
   }
 
   /**
+   * MathLive sets \begin{array} on the baseline of its first row (as if it were array[t]) and pads
+   * it like a bordered table, so in \left(…\right) the rows sit low inside oversized brackets.
+   * TeX, MathJax and classic editors center an array on the math axis like a matrix: it is laid out
+   * as one (the document and its LaTeX are unchanged).
+   */
+  function centerArrays() {
+    scratchField.setValue('\\begin{array}{c}x\\end{array}', { silenceNotifications: true });
+    const ArrayAtom = fieldModel(scratchField)?.root.body.find(atom => atom.type === 'array')?.constructor;
+    if (!ArrayAtom) return;
+    const render = ArrayAtom.prototype.render;
+    ArrayAtom.prototype.render = function (context) {
+      if (this.environmentName !== 'array') return render.call(this, context);
+      const saved = [this.environmentName, this.leftDelim, this.rightDelim];
+      this.environmentName = 'matrix';
+      if (!this.leftDelim) [this.leftDelim, this.rightDelim] = ['.', '.'];
+      try {
+        return render.call(this, context);
+      } finally {
+        [this.environmentName, this.leftDelim, this.rightDelim] = saved;
+      }
+    };
+  }
+
+  /**
    * MathLive lays out an empty slot with the fallback metrics of its ▢ glyph: 0.8em wide and 0.2em
    * below the baseline, which makes empty structures wider and taller than filled ones (the
    * expression jumps when the first character goes in). Slots get the size of a classic editor's:
@@ -3107,6 +3131,7 @@
 
     scratchField = await createField({ scratch: true });
     placeholderClass(); // Sizes the slots before the first line renders.
+    centerArrays();
     mathfield = await insertLine(0);
     resetHistory();
 
