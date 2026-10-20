@@ -2585,7 +2585,7 @@
   }
 
   function startComposition(mode, text = '', start = 0) {
-    composing = { mode, text, arg: null, page: 0, list: [], start: mode === 'math' ? null : start };
+    composing = { mode, text, raw: null, page: 0, list: [], start: mode === 'math' ? null : start };
     renderCandidates();
   }
 
@@ -2602,25 +2602,50 @@
     return !!name && (!!paletteById.get(entry.item?.id)?.accent || NAMED_ARGUMENT_COMMANDS.has(name));
   }
 
-  /** Starts typing the argument of a name-keeping command (see keepsName). */
+  /**
+   * A name-keeping command (see keepsName) becomes raw LaTeX text, \mathrm{|}, with the caret
+   * between its braces. As in AxMath the raw text is edited like text: ←/→ move through it, typing
+   * goes in at the caret, and Enter turns the whole of it into math.
+   */
   function enterArgument(entry) {
-    composing.text = entry.name;
-    composing.arg = '';
-    composing.argEntry = entry;
+    enterRaw(`\\${entry.name}{}`, -1, entry);
+  }
+
+  /** Switches the composition to raw text; `caret` counts from the start (negative: back from the end). */
+  function enterRaw(raw, caret, entry = null) {
+    composing.raw = raw;
+    composing.caret = caret < 0 ? raw.length + caret : caret;
+    composing.rawEntry = entry;
     $('candidates').hidden = true;
     updateInlinePreedit();
   }
 
-  /** Enter after an argument: \name{argument}, or the command with an empty slot. */
-  function commitArgument() {
-    const { text: name, arg, argEntry } = composing;
+  /** Enter in raw text: its LaTeX goes into the equation (a font command left empty keeps its slot). */
+  function commitRaw() {
+    const { raw, rawEntry } = composing;
     closeComposition();
     mathfield?.focus();
-    // Spaces count in text (\text{a b}); in math they don't, and are left out as AxMath does.
-    const content = /^(text|mbox)/.test(name) ? arg.trim() : arg.replace(/\s+/g, '');
-    if (content) insertLatex(`\\${name}{${content}}`);
-    else if (argEntry.item) insertItem(argEntry.item);
-    else insertLatex(argEntry.latex);
+    const command = /^\\([a-zA-Z]+)\{([^{}]*)\}$/.exec(raw);
+    if (command && !command[2].trim() && rawEntry) {
+      if (rawEntry.item) insertItem(rawEntry.item);
+      else insertLatex(rawEntry.latex);
+      return;
+    }
+    // Spaces count in text (\text{a b}); in a math font they don't, and are left out as AxMath does.
+    const latex = command && !/^(text|mbox)/.test(command[1]) ? `\\${command[1]}{${command[2].replace(/\s+/g, '')}}` : raw;
+    if (latex.trim()) insertLatex(latex.replace(/#/g, '\\#'));
+  }
+
+  /** Raw text as it is shown: every character literally, in upright type. */
+  function rawDisplay(text) {
+    const TEXT = { '^': '\\textasciicircum', '_': '\\_', '#': '\\#', '%': '\\%', '&': '\\&', '$': '\\$', '~': '\\textasciitilde' };
+    return [...text].map(char => {
+      if (/[a-zA-Z0-9]/.test(char)) return char;
+      if (char === '\\') return '\\backslash ';
+      if (char === '{' || char === '}') return `\\${char}`;
+      if (char === ' ') return '\\ ';
+      return `\\text{${TEXT[char] ?? char}}`;
+    }).join('');
   }
 
   /**
@@ -2629,7 +2654,7 @@
    * the document; choosing a candidate or cancelling removes it.
    */
   function updateInlinePreedit() {
-    const shown = composing.arg === null ? composing.text : `${composing.text}{${composing.arg}}`;
+    const shown = composing.raw === undefined || composing.raw === null ? composing.text : `${composing.raw}\u0000${composing.caret}`;
     if (composing.preedit === shown) return;
     const model = fieldModel();
     if (!model) return;
@@ -2641,15 +2666,21 @@
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
     const color = document.documentElement.dataset.theme === 'dark' ? '#6ea8ff' : '#2f6fe4';
-    let raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
-    if (composing.arg !== null) {
-      // The argument being typed, braces and all: \mathrm{ab c}.
-      const arg = [...composing.arg].map(char => (char === ' ' ? '\\ ' : /[a-zA-Z0-9]/.test(char) ? char : `\\text{${char}}`)).join('');
-      raw += `\\{\\mathrm{${arg}}\\}`;
+    const options = { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false };
+    if (composing.raw === undefined || composing.raw === null) {
+      const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
+      mathfield.insert(`\\textcolor{${color}}{${raw}}`, options);
+      composing.end = mathfield.position;
+    } else {
+      // Raw text in two parts, so that the caret can sit between them.
+      const left = composing.raw.slice(0, composing.caret);
+      const right = composing.raw.slice(composing.caret);
+      if (left) mathfield.insert(`\\textcolor{${color}}{\\mathrm{${rawDisplay(left)}}}`, options);
+      const caret = mathfield.position;
+      if (right) mathfield.insert(`\\textcolor{${color}}{\\mathrm{${rawDisplay(right)}}}`, options);
+      composing.end = mathfield.position;
+      mathfield.position = caret;
     }
-    mathfield.insert(`\\textcolor{${color}}{${raw}}`,
-      { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
-    composing.end = mathfield.position;
     composing.preedit = shown;
   }
 
@@ -2724,20 +2755,33 @@
       if (key === ',' || key === 'PageUp') return page(-1);
       return false;
     }
-    if (composing.arg !== null) {
-      // Typing a name-keeping command's argument (see keepsName).
-      if (key === 'Enter') { commitArgument(); return true; }
-      if (key === 'Escape') { closeComposition(); return true; }
-      if (key === 'Backspace') {
-        if (composing.arg) composing.arg = composing.arg.slice(0, -1);
-        else { composing.arg = null; composing.page = 0; renderCandidates(); return true; } // Back to the name.
-        updateInlinePreedit();
-        return true;
+    if (composing.raw !== undefined && composing.raw !== null) {
+      // Editing raw text (see enterArgument).
+      const { raw, caret } = composing;
+      const edit = (text, at) => { composing.raw = text; composing.caret = at; updateInlinePreedit(); return true; };
+      switch (key) {
+        case 'Enter': commitRaw(); return true;
+        case 'Escape': closeComposition(); return true;
+        case 'ArrowLeft': return edit(raw, Math.max(0, caret - 1));
+        case 'ArrowRight': return edit(raw, Math.min(raw.length, caret + 1));
+        case 'Home': case 'ArrowUp': return edit(raw, 0);
+        case 'End': case 'ArrowDown': return edit(raw, raw.length);
+        case 'Backspace':
+          if (!caret) return true;
+          if (raw.length === 1) { closeComposition(); return true; }
+          return edit(raw.slice(0, caret - 1) + raw.slice(caret), caret - 1);
+        case 'Delete':
+          return caret < raw.length ? edit(raw.slice(0, caret) + raw.slice(caret + 1), caret) : true;
+        default:
+          // Braces come in pairs, as when a command was chosen: { opens {|}, } steps over its partner.
+          if (key === '}' && raw[caret] === '}') return edit(raw, caret + 1);
+          if (key === '{') return edit(`${raw.slice(0, caret)}{}${raw.slice(caret)}`, caret + 1);
+          if (key.length === 1) return edit(raw.slice(0, caret) + key + raw.slice(caret), caret + 1);
+          return true;
       }
-      if (key.length === 1 && !/[\\{}#%&$^_~]/.test(key)) { composing.arg += key; updateInlinePreedit(); return true; }
-      return true;
     }
     if (/^[a-zA-Z]$/.test(key)) { composing.text += key; composing.page = 0; renderCandidates(); return true; }
+    if (key === '{' && composing.text) { enterRaw(`\\${composing.text}{}`, -1); return true; } // \name{ … typed by hand.
     switch (key) {
       case 'Backspace':
         if (!composing.text) closeComposition();
