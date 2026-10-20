@@ -749,16 +749,19 @@
 
   /** The LaTeX of the selection (the whole document after ⌘A), or null when nothing is selected. */
   function selectionLatex() {
-    if (allSelected) return spanLatex();
+    if (allSelected) return literalRaw(spanLatex());
     if (codeFocused()) {
       const { selectionStart, selectionEnd, value } = codeArea;
-      return selectionStart === selectionEnd ? null : value.slice(selectionStart, selectionEnd);
+      return selectionStart === selectionEnd ? null : literalRaw(value.slice(selectionStart, selectionEnd));
     }
     const model = fieldModel();
     if (!model || model.selectionIsCollapsed || model.selectionIsPlaceholder) return null;
     const [start, end] = [...model.selection.ranges[0]].sort((a, b) => a - b);
-    return withoutPlaceholders(portableLatex(mathfield.getValue(start, end, 'latex')));
+    return literalRaw(withoutPlaceholders(portableLatex(mathfield.getValue(start, end, 'latex'))));
   }
+
+  /** The LaTeX to copy: the selection, or else the whole document. */
+  const copyLatex = () => selectionLatex() ?? literalRaw(documentLatex());
 
   function setGreekPending(active) {
     greekPending = active;
@@ -960,6 +963,7 @@
     field.menuItems = [];
     field.mathModeSpace = '\\,\\,'; // Space, as classic editors write it.
     field.inlineShortcuts = INLINE_SHORTCUTS;
+    field.macros = { ...field.macros, vtraw: RAW_MACRO };
     // A typed / is a slash, as in classic editors; MathLive would make it a fraction.
     field.keybindings = field.keybindings.filter(binding => !['/', '[NumpadDivide]'].includes(binding.key));
     field.letterShapeStyle = 'tex';
@@ -1053,6 +1057,9 @@
   }
 
   /** Rewrites MathLive output that standard LaTeX (and MathJax) rejects, e.g. `\middle{|}` or `\bm`. */
+  /** Raw text left in the equation (see isRaw) as literal upright text, for copied LaTeX. */
+  const literalRaw = latex => latex.replace(/\\vtraw(?![a-zA-Z])/g, '\\mathrm');
+
   function portableLatex(latex) {
     return latex
       .replace(/\\bm(?![a-zA-Z])/g, '\\boldsymbol')
@@ -1621,6 +1628,9 @@
     }
     const position = model.selectionIsPlaceholder ? (direction > 0 ? end : start) : model.position;
     const here = model.at(position);
+    // Into raw text left in the equation: it opens with the caret at that side.
+    if (model.selectionIsCollapsed && direction > 0 && isRaw(here?.rightSibling)) return openRaw(here.rightSibling, 0);
+    if (model.selectionIsCollapsed && direction < 0 && isRaw(here)) return openRaw(here, 'end');
     const lineIndex = lines.indexOf(mathfield);
     const enterSlot = (owner, branch, atEnd) => {
       const atoms = branchAtoms(owner, branch);
@@ -1969,6 +1979,10 @@
         return true;
       case 'backspace':
         if (shift) return false;
+        if (collapsed && isRaw(model.at(model.position))) { // Right after raw text: its last character goes.
+          openRaw(model.at(model.position), 'end');
+          return handleCompositionKey(event);
+        }
         if (collapsed && model.position === 0 && index > 0) { mergeLines(index - 1, index); return true; }
         return backspace();
       case 'space':
@@ -1976,6 +1990,10 @@
         if (shift || !collapsed) return false;
         return FUNCTION_NAMES.has(model.at(model.position)?.command?.slice(1));
       case 'forwarddelete': {
+        if (collapsed && isRaw(model.at(model.position)?.rightSibling)) { // Right before raw text: its first character goes.
+          openRaw(model.at(model.position).rightSibling, 0);
+          return handleCompositionKey(event);
+        }
         const empty = emptyColumnRow(model, caretAtom(model));
         if (empty && empty.row < empty.array.rowCount - 1) {
           deleteColumnRow(empty.array, empty.row, 1);
@@ -2602,6 +2620,10 @@
     return !!name && (!!paletteById.get(entry.item?.id)?.accent || NAMED_ARGUMENT_COMMANDS.has(name));
   }
 
+  const RAW_COLOR = '#3d85f5';
+  const RAW_RGB = 'rgb(61, 133, 245)'; // RAW_COLOR as computed styles give it.
+  const RAW_MACRO = { args: 1, def: `\\textcolor{${RAW_COLOR}}{\\mathrm{#1}}`, captureSelection: true, expand: false };
+
   /**
    * A name-keeping command (see keepsName) becomes raw LaTeX text, \mathrm{|}, with the caret
    * between its braces. As in AxMath the raw text is edited like text: ←/→ move through it, typing
@@ -2609,6 +2631,88 @@
    */
   function enterArgument(entry) {
     enterRaw(`\\${entry.name}{}`, -1, entry);
+  }
+
+  /**
+   * Raw text the caret has left stays in the equation, as in AxMath, as \vtraw{…}: one unit shown
+   * in blue, whose argument is the raw text written to be displayed literally (see rawDisplay).
+   * The caret entering it (←/→, Backspace or Delete beside it, a click) opens it for editing again;
+   * Enter only converts raw text with the caret in it. Copied LaTeX and exports show it as text.
+   */
+  const isRaw = atom => atom?.type === 'macro' && atom.command === '\\vtraw';
+
+  /** The raw text of a \vtraw block (rawDisplay undone). */
+  function rawOf(atom) {
+    const display = (atom.macroArgs ?? '').trim().replace(/^\{([^]*)\}$/, '$1');
+    const TEXT = { textasciicircum: '^', _: '_', '#': '#', '%': '%', '&': '&', $: '$', textasciitilde: '~' };
+    let raw = '';
+    for (let at = 0; at < display.length;) {
+      const rest = display.slice(at);
+      let match;
+      if ((match = /^\\backslash ?/.exec(rest))) raw += '\\';
+      else if ((match = /^\\([{} ])/.exec(rest))) raw += match[1];
+      else if ((match = /^\\text\{\\?([^{}]*)\}/.exec(rest))) raw += TEXT[match[1]] ?? match[1];
+      else match = [rest[0]], raw += rest[0];
+      at += match[0].length;
+    }
+    return raw;
+  }
+
+  /** Leaves the composition, keeping its raw text in the equation as a \vtraw block. */
+  function parkComposition() {
+    const state = composing;
+    if (state?.mode !== 'math' || state.end === undefined || !state.field?.isConnected) { closeComposition(); return null; }
+    const raw = state.raw ?? `\\${state.text}`;
+    composing = null;
+    $('candidates').hidden = true;
+    const field = state.field;
+    field.selection = { ranges: [[state.start, state.end]] };
+    field.insert(`\\vtraw{${rawDisplay(raw)}}`, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    const parked = { field, start: state.start, oldEnd: state.end, end: field.position };
+    if (field === mathfield) syncFromField();
+    return parked;
+  }
+
+  /** Opens a \vtraw block for editing with the caret at `caret` (a character index, or 'end'). */
+  function openRaw(atom, caret) {
+    const model = fieldModel();
+    const raw = rawOf(atom);
+    mathfield.selection = { ranges: [atomRange(model, atom)] };
+    if (/^\\[a-zA-Z]*$/.test(raw) && caret === 'end') {
+      startComposition('math', raw.slice(1)); // Just a command name: its candidates come back.
+      return true;
+    }
+    composing = { mode: 'math', text: '', raw: null, page: 0, list: [], start: null };
+    enterRaw(raw, caret === 'end' ? raw.length : caret);
+    return true;
+  }
+
+  /**
+   * The \vtraw block under a click, and the character index the click falls at. MathLive keeps no
+   * element for a macro's atoms, so the blocks' glyphs are found by their colour, one glyph for
+   * each character but a space, in document order.
+   */
+  function rawAtPoint(model, x, y) {
+    const glyphs = [...mathfield.shadowRoot.querySelectorAll('.ML__content span')]
+      .filter(span => span.childElementCount === 0 && getComputedStyle(span).color === RAW_RGB);
+    let next = 0;
+    for (const atom of model.atoms.filter(isRaw)) {
+      const raw = rawOf(atom);
+      const mine = glyphs.slice(next, next + [...raw].filter(char => char !== ' ').length).map(span => span.getBoundingClientRect());
+      next += mine.length;
+      if (!mine.length) continue;
+      const top = Math.min(...mine.map(box => box.top)) - 6;
+      const bottom = Math.max(...mine.map(box => box.bottom)) + 6;
+      if (x < mine[0].left - 2 || x > mine.at(-1).right + 2 || y < top || y > bottom) continue;
+      let index = 0;
+      let glyph = 0;
+      [...raw].forEach((char, at) => {
+        const box = char === ' ' ? mine[glyph] : mine[glyph++];
+        if (box && x > (char === ' ' ? box.left : box.left + box.width / 2)) index = at + 1;
+      });
+      return { atom, index };
+    }
+    return null;
   }
 
   /** Switches the composition to raw text; `caret` counts from the start (negative: back from the end). */
@@ -2665,7 +2769,7 @@
     } else {
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
-    const color = document.documentElement.dataset.theme === 'dark' ? '#6ea8ff' : '#2f6fe4';
+    const color = RAW_COLOR;
     const options = { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false };
     if (composing.raw === undefined || composing.raw === null) {
       const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
@@ -2743,6 +2847,7 @@
   /** Keys while candidates are shown. Returns true if the key was used. */
   function handleCompositionKey(event) {
     const { key } = event;
+    if (['Shift', 'Alt', 'Meta', 'Control', 'CapsLock', 'Fn'].includes(key)) return true; // A modifier on its own.
     if (event.metaKey || event.ctrlKey || event.altKey) { closeComposition(); return false; }
     const page = delta => { composing.page += delta; renderCandidates(); return true; };
     const choose = index => { chooseCandidate(composing.list[composing.page * PAGE_SIZE + index]); return true; };
@@ -2762,7 +2867,13 @@
       switch (key) {
         case 'Enter': commitRaw(); return true;
         case 'Escape': closeComposition(); return true;
-        case 'ArrowLeft': return edit(raw, Math.max(0, caret - 1));
+        case 'ArrowLeft':
+          if (!caret) { // Out of the raw text, which stays as it is.
+            const parked = parkComposition();
+            if (parked) mathfield.position = parked.start;
+            return true;
+          }
+          return edit(raw, caret - 1);
         case 'ArrowRight': return edit(raw, Math.min(raw.length, caret + 1));
         case 'Home': case 'ArrowUp': return edit(raw, 0);
         case 'End': case 'ArrowDown': return edit(raw, raw.length);
@@ -2794,8 +2905,10 @@
         return true;
       case 'Enter': commitTyped(); return true;
       case 'Escape': closeComposition(); return true;
-      case '.': case 'PageDown': case 'ArrowRight': return page(1);
-      case ',': case 'PageUp': case 'ArrowLeft': return page(-1);
+      case '.': case 'PageDown': return page(1);
+      case ',': case 'PageUp': return page(-1);
+      case 'ArrowLeft': enterRaw(`\\${composing.text}`, -1); return true; // The name is raw text: move into it.
+      case 'ArrowRight': return true;
       case 'ArrowUp': case 'ArrowDown': return true;
       case '\\': commitTyped(); startComposition('math'); return true;
       default:
@@ -2890,7 +3003,7 @@
           return;
         }
         case 'copyLatex':
-          await navigator.clipboard.writeText(selectionLatex() ?? state.latex);
+          await navigator.clipboard.writeText(copyLatex());
           toast('LaTeX copied');
           return;
         case 'copyImage':
@@ -3508,8 +3621,36 @@
   // (Our own cancel, sent to MathLive when taking a drag over, is not a real one.)
   document.addEventListener('pointercancel', event => { if (event.isTrusted && event.pointerId === drag?.pointerId) endDrag(); }, true);
   window.addEventListener('blur', endDrag);
+  // A click while raw text is being typed leaves it in the equation (as in AxMath); a click on raw
+  // text opens it with the caret at the click. Done once the click has placed the caret.
+  document.addEventListener('pointerdown', event => {
+    if ($('candidates').contains(event.target) || !lines.some(field => event.composedPath().includes(field))) return;
+    const state = composing?.mode === 'math' ? composing : null;
+    const point = { x: event.clientX, y: event.clientY };
+    const cancel = () => document.removeEventListener('pointerup', afterClick, true);
+    document.addEventListener('pointercancel', cancel, { once: true, capture: true });
+    const afterClick = () => setTimeout(() => {
+      document.removeEventListener('pointercancel', cancel, true);
+      if (state && composing === state) {
+        const clicked = mathfield;
+        const model = fieldModel(state.field);
+        const at = clicked === state.field ? Math.max(...model.selection.ranges[0]) : null;
+        const parked = parkComposition();
+        if (parked && at !== null) {
+          const shift = parked.end - parked.oldEnd;
+          state.field.position = at <= parked.start ? at : at >= parked.oldEnd ? at + shift : parked.end;
+        }
+        if (clicked !== state.field) { clicked.focus(); mathfield = clicked; }
+        return;
+      }
+      const model = fieldModel();
+      const hit = !composing && model && rawAtPoint(model, point.x, point.y);
+      if (hit) openRaw(hit.atom, hit.index);
+    });
+    document.addEventListener('pointerup', afterClick, { once: true, capture: true });
+  }, true);
   document.addEventListener('mousedown', event => {
-    if (composing && !$('candidates').contains(event.target)) closeComposition();
+    if (composing && !$('candidates').contains(event.target) && !lines.some(field => event.composedPath().includes(field))) parkComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
     if (recording && !$('recorder').contains(event.target)) stopRecording();
   });
@@ -3623,6 +3764,7 @@
     runShortcut(combo) { return runShortcut(combo); },
     setTheme: mode => setTheme(mode),
     selectionLatex,
+    copyLatex,
     setShortcutOverrides(raw) { overrides = sanitizeOverrides(raw); rebuildKeymap(); },
     toast,
     async exportSVG(snapshot) {

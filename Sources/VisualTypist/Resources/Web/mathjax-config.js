@@ -9,7 +9,10 @@ window.MathJax = {
       'mathtools', 'mhchem', 'cases', 'upgreek', 'unicode', 'textmacros', 'textcomp', 'boldsymbol',
       'empheq', 'extpfeil', 'gensymb', 'colortbl'],
     // An empty slot: the light-blue block the editor shows.
-    macros: { placeholder: ['{\\color[rgb]{0.71,0.85,0.97}{\\rule[-0.05em]{0.42em}{0.68em}}}', 1] },
+    macros: {
+      placeholder: ['{\\color[rgb]{0.71,0.85,0.97}{\\rule[-0.05em]{0.42em}{0.68em}}}', 1],
+      vtraw: ['\\mathrm{#1}', 1], // Raw text left in the equation: literal, upright text.
+    },
     maxBuffer: 100000,
     maxMacros: 10000,
     formatError: (_jax, error) => { throw new Error(error.message); },

@@ -166,7 +166,8 @@ final class EquationSession {
     /// Copies the selection's LaTeX, or the whole document's when nothing is selected.
     func copyLaTeX() {
         Task {
-            let latex = await selectedLaTeX() ?? document.latex
+            // The selection, or the whole document, with raw text written as literal text.
+            let latex = (try? await bridge.call("return window.vt.copyLatex()") as? String) ?? document.latex
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(latex, forType: .string)
             bridge.toast("LaTeX copied")

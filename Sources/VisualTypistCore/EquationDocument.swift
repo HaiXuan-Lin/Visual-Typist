@@ -118,6 +118,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         \\usepackage{amsmath,amssymb,xcolor}
         \\usepackage{fix-cm}
         \\providecommand{\\placeholder}[1]{\\square}
+        \\providecommand{\\vtraw}[1]{\\mathrm{#1}}
         \\definecolor{ink}{HTML}{\(color)}
         \\begin{document}
         \\color{ink}\\fontsize{\(Self.format(size))}{\(Self.format(size * 1.2))}\\selectfont
