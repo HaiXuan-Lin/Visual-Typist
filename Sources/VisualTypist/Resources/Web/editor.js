@@ -2864,10 +2864,20 @@
     if (!before.trim() && !after.trim()) {
       if (entry.item) insertItem(entry.item);
       else insertLatex(entry.latex);
-      return;
+    } else {
+      // Raw text around it becomes math with it, as in AxMath (\\alpha+\\be, Space: α+β).
+      insertLatex(`${before}${(entry.item?.latex ?? entry.latex).replace(/#@|#[0-9]/g, '#?')}${after}`);
     }
-    // Raw text around it becomes math with it, as in AxMath (\\alpha+\\be, Space: α+β).
-    insertLatex(`${before}${(entry.item?.latex ?? entry.latex).replace(/#@|#[0-9]/g, '#?')}${after}`);
+    settleAfterRaw();
+  }
+
+  /**
+   * Raw text has become math: what is typed next has no font, as in AxMath (MathLive would carry
+   * on the style of what was inserted: \d, Enter, x gave \mathrm{dx}). A caret in a slot keeps it.
+   */
+  function settleAfterRaw() {
+    if (composing || !mathfield || !fieldModel()?.selectionIsCollapsed) return;
+    resetTypingStyle(mathfield);
   }
 
   /** Keys while composing. Returns true if the key was used. */
@@ -2896,7 +2906,7 @@
     const edit = (text, at) => { composing.raw = text; composing.caret = at; refreshComposition(); return true; };
     const offered = !$('candidates').hidden && composing.list.length > 0;
     switch (key) {
-      case 'Enter': commitRaw(); return true;
+      case 'Enter': commitRaw(); settleAfterRaw(); return true;
       case 'Escape': closeComposition(); return true;
       case 'Tab': return true; // Tab does not choose (Space and the digits do).
       case 'ArrowLeft':
