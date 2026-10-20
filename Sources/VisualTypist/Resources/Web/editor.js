@@ -176,9 +176,20 @@
   const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
     'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur', 'fontBlackboard']);
 
+  // While raw text is typed in the equation, the moving shortcuts (⌥A, ⌥D…) move through it.
+  const RAW_MOVES = { cursorLeft: 'ArrowLeft', cursorRight: 'ArrowRight', cursorUp: 'ArrowUp', cursorDown: 'ArrowDown',
+    lineStart: 'Home', lineEnd: 'End' };
+
   function runShortcut(combo) {
     const binding = keymap[normalizeCombo(combo)];
     if (!binding) return false;
+    if (composing?.mode === 'math') {
+      // The native side runs bound shortcuts without a keydown here, so raw text is handled here too:
+      // a move goes through it, anything else leaves it in the equation first.
+      const key = RAW_MOVES[binding.command];
+      if (key) return handleCompositionKey({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false });
+      parkComposition();
+    }
     // A shortcut is its own undo step (the native side runs it without a keydown here).
     inputKind = 'other';
     history.lastKind = null;
@@ -2875,8 +2886,12 @@
       if (key === ',' || key === 'PageUp') return page(-1);
       return false;
     }
-    // A shortcut leaves the raw text where it is and does its work.
-    if (event.metaKey || event.ctrlKey || event.altKey) { parkComposition(); return false; }
+    // A bound shortcut is left to runShortcut (moves go through the raw text); any other leaves the
+    // raw text where it is and does its work.
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      if (!keymap[comboFromEvent(event)]) parkComposition();
+      return false;
+    }
     const { raw, caret } = composing;
     const edit = (text, at) => { composing.raw = text; composing.caret = at; refreshComposition(); return true; };
     const offered = !$('candidates').hidden && composing.list.length > 0;
