@@ -1056,6 +1056,8 @@
   function portableLatex(latex) {
     return latex
       .replace(/\\bm(?![a-zA-Z])/g, '\\boldsymbol')
+      // MathLive's insert wraps an operator name's letters in \mathrm: \operatorname{\mathrm{tr}}.
+      .replace(/\\operatorname\{\\mathrm\{([^{}]*)\}\}/g, '\\operatorname{$1}')
       // MathLive's own commands for d, e, i and j.
       .replace(/\\differentialD(?![a-zA-Z])/g, '\\mathrm{d}').replace(/\\capitalDifferentialD(?![a-zA-Z])/g, '\\mathrm{D}')
       .replace(/\\exponentialE(?![a-zA-Z])/g, '\\mathrm{e}').replace(/\\imaginaryI(?![a-zA-Z])/g, '\\mathrm{i}')
@@ -2583,8 +2585,42 @@
   }
 
   function startComposition(mode, text = '', start = 0) {
-    composing = { mode, text, page: 0, list: [], start: mode === 'math' ? null : start };
+    composing = { mode, text, arg: null, page: 0, list: [], start: mode === 'math' ? null : start };
     renderCandidates();
+  }
+
+  /**
+   * Font commands and accents chosen in the equation keep their name, as in AxMath: \mathrm{…}
+   * stays raw text while its argument is typed, and Enter makes it \mathrm{argument}.
+   */
+  const NAMED_ARGUMENT_COMMANDS = new Set([...FONT_COMMANDS, 'mathbb', 'operatorname', 'text', 'textbf', 'textit',
+    'textrm', 'textsf', 'texttt', 'textup', 'mbox', 'mathop', 'mathrel', 'mathord', 'pmb']);
+
+  function keepsName(entry) {
+    const name = /^\\([a-zA-Z]+)\{#0\}$/.exec(entry?.item?.latex ?? entry?.latex ?? '')?.[1];
+    // Candidates carry accents as plain templates; the palette still knows them as accents.
+    return !!name && (!!paletteById.get(entry.item?.id)?.accent || NAMED_ARGUMENT_COMMANDS.has(name));
+  }
+
+  /** Starts typing the argument of a name-keeping command (see keepsName). */
+  function enterArgument(entry) {
+    composing.text = entry.name;
+    composing.arg = '';
+    composing.argEntry = entry;
+    $('candidates').hidden = true;
+    updateInlinePreedit();
+  }
+
+  /** Enter after an argument: \name{argument}, or the command with an empty slot. */
+  function commitArgument() {
+    const { text: name, arg, argEntry } = composing;
+    closeComposition();
+    mathfield?.focus();
+    // Spaces count in text (\text{a b}); in math they don't, and are left out as AxMath does.
+    const content = /^(text|mbox)/.test(name) ? arg.trim() : arg.replace(/\s+/g, '');
+    if (content) insertLatex(`\\${name}{${content}}`);
+    else if (argEntry.item) insertItem(argEntry.item);
+    else insertLatex(argEntry.latex);
   }
 
   /**
@@ -2593,7 +2629,8 @@
    * the document; choosing a candidate or cancelling removes it.
    */
   function updateInlinePreedit() {
-    if (composing.preedit === composing.text) return;
+    const shown = composing.arg === null ? composing.text : `${composing.text}{${composing.arg}}`;
+    if (composing.preedit === shown) return;
     const model = fieldModel();
     if (!model) return;
     if (composing.start === null) {
@@ -2604,11 +2641,16 @@
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
     const color = document.documentElement.dataset.theme === 'dark' ? '#6ea8ff' : '#2f6fe4';
-    const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
+    let raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
+    if (composing.arg !== null) {
+      // The argument being typed, braces and all: \mathrm{ab c}.
+      const arg = [...composing.arg].map(char => (char === ' ' ? '\\ ' : /[a-zA-Z0-9]/.test(char) ? char : `\\text{${char}}`)).join('');
+      raw += `\\{\\mathrm{${arg}}\\}`;
+    }
     mathfield.insert(`\\textcolor{${color}}{${raw}}`,
       { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
     composing.end = mathfield.position;
-    composing.preedit = composing.text;
+    composing.preedit = shown;
   }
 
   function removeInlinePreedit(state) {
@@ -2637,6 +2679,7 @@
 
   function chooseCandidate(entry) {
     const state = composing;
+    if (state?.mode === 'math' && keepsName(entry)) return enterArgument(entry);
     closeComposition();
     if (!state || !entry) return;
     if (state.mode === 'code') {
@@ -2651,16 +2694,19 @@
   }
 
   /**
-   * Enter: the command as typed if it exists (in its own form: \mathbb{▢}, not \mathbb{R}), otherwise
-   * the best candidate (nothing for a lone backslash).
+   * Enter, as in AxMath: the command as typed if it exists (in its own form: \mathbb{…}, not
+   * \mathbb{R}); any other name becomes upright text, \d → \mathrm{d}; a lone backslash, nothing.
    */
   function commitTyped() {
     const state = composing;
     if (!state) return;
     const exact = state.list.find(entry => entry.name === state.text);
     if (exact) return chooseCandidate(exact);
-    if (state.text && state.list.length) return chooseCandidate(state.list[0]);
     closeComposition();
+    if (state.text) {
+      mathfield?.focus();
+      insertLatex(`\\mathrm{${state.text}}`);
+    }
   }
 
   /** Keys while candidates are shown. Returns true if the key was used. */
@@ -2678,13 +2724,27 @@
       if (key === ',' || key === 'PageUp') return page(-1);
       return false;
     }
+    if (composing.arg !== null) {
+      // Typing a name-keeping command's argument (see keepsName).
+      if (key === 'Enter') { commitArgument(); return true; }
+      if (key === 'Escape') { closeComposition(); return true; }
+      if (key === 'Backspace') {
+        if (composing.arg) composing.arg = composing.arg.slice(0, -1);
+        else { composing.arg = null; composing.page = 0; renderCandidates(); return true; } // Back to the name.
+        updateInlinePreedit();
+        return true;
+      }
+      if (key.length === 1 && !/[\\{}#%&$^_~]/.test(key)) { composing.arg += key; updateInlinePreedit(); return true; }
+      return true;
+    }
     if (/^[a-zA-Z]$/.test(key)) { composing.text += key; composing.page = 0; renderCandidates(); return true; }
     switch (key) {
       case 'Backspace':
         if (!composing.text) closeComposition();
         else { composing.text = composing.text.slice(0, -1); composing.page = 0; renderCandidates(); }
         return true;
-      case ' ': case 'Tab':
+      case 'Tab': return true; // Tab does not choose (Space and the digits do).
+      case ' ':
         if (composing.list.length) return choose(0);
         commitTyped();
         return true;
