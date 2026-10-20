@@ -960,6 +960,8 @@
     field.menuItems = [];
     field.mathModeSpace = '\\,\\,'; // Space, as classic editors write it.
     field.inlineShortcuts = INLINE_SHORTCUTS;
+    // A typed / is a slash, as in classic editors; MathLive would make it a fraction.
+    field.keybindings = field.keybindings.filter(binding => !['/', '[NumpadDivide]'].includes(binding.key));
     field.letterShapeStyle = 'tex';
     if (!scratch) {
       const style = document.createElement('style');
