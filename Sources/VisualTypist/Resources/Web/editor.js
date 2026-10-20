@@ -2570,7 +2570,8 @@
     if (composing.mode === 'math') {
       updateInlinePreedit();
       const model = fieldModel();
-      const point = model && caretPoint(model, composing.start ?? model.position);
+      // Under the command the candidates are for: one atom per raw character.
+      const point = model && caretPoint(model, (composing.start ?? model.position) + (commandBeforeCaret()?.at ?? 0));
       const fieldBox = mathfield.getBoundingClientRect();
       caretX = point?.x ?? fieldBox.left;
       preedit.hidden = true;
@@ -2603,8 +2604,10 @@
   }
 
   function startComposition(mode, text = '', start = 0) {
-    composing = { mode, text, raw: null, page: 0, list: [], start: mode === 'math' ? null : start };
-    renderCandidates();
+    composing = mode === 'math'
+      ? { mode, raw: `\\${text}`, caret: text.length + 1, quiet: false, text: '', page: 0, list: [], start: null }
+      : { mode, text, page: 0, list: [], start };
+    refreshComposition();
   }
 
   /**
@@ -2625,14 +2628,11 @@
   const RAW_MACRO = { args: 1, def: `\\textcolor{${RAW_COLOR}}{\\mathrm{#1}}`, captureSelection: true, expand: false };
 
   /**
-   * A name-keeping command (see keepsName) becomes raw LaTeX text, \mathrm{|}, with the caret
-   * between its braces. As in AxMath the raw text is edited like text: ←/→ move through it, typing
-   * goes in at the caret, and Enter turns the whole of it into math.
+   * In the equation, what is typed after \\ is raw LaTeX text, as in AxMath: blue text that takes the
+   * place of the slot or selection, whatever is typed goes in at its caret (letters, braces, +, more
+   * commands), ←/→ and clicks move through it, and it becomes math on Enter, or when a candidate
+   * for the command before the caret is chosen. It is never reported to the document while typed.
    */
-  function enterArgument(entry) {
-    enterRaw(`\\${entry.name}{}`, -1, entry);
-  }
-
   /**
    * Raw text the caret has left stays in the equation, as in AxMath, as \vtraw{…}: one unit shown
    * in blue, whose argument is the raw text written to be displayed literally (see rawDisplay).
@@ -2658,32 +2658,33 @@
     return raw;
   }
 
-  /** Leaves the composition, keeping its raw text in the equation as a \vtraw block. */
+  /** Leaves the composition, keeping its raw text in the equation as a \\vtraw block. */
   function parkComposition() {
     const state = composing;
     if (state?.mode !== 'math' || state.end === undefined || !state.field?.isConnected) { closeComposition(); return null; }
-    const raw = state.raw ?? `\\${state.text}`;
     composing = null;
     $('candidates').hidden = true;
     const field = state.field;
+    // A caret already moved out of the raw text (a click beside the line) stays where it went.
+    const model = fieldModel(field);
+    const moved = model?.selectionIsCollapsed && model.position !== state.start + state.caret ? model.position : null;
     field.selection = { ranges: [[state.start, state.end]] };
-    field.insert(`\\vtraw{${rawDisplay(raw)}}`, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    field.insert(`\\vtraw{${rawDisplay(state.raw)}}`, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
     const parked = { field, start: state.start, oldEnd: state.end, end: field.position };
+    if (moved !== null && moved <= state.start) field.position = moved;
+    else if (moved !== null && moved >= state.end) field.position = moved + parked.end - state.end;
     if (field === mathfield) syncFromField();
     return parked;
   }
 
-  /** Opens a \vtraw block for editing with the caret at `caret` (a character index, or 'end'). */
+  /** Opens a \\vtraw block for editing with the caret at `caret` (a character index, or 'end'). */
   function openRaw(atom, caret) {
     const model = fieldModel();
     const raw = rawOf(atom);
     mathfield.selection = { ranges: [atomRange(model, atom)] };
-    if (/^\\[a-zA-Z]*$/.test(raw) && caret === 'end') {
-      startComposition('math', raw.slice(1)); // Just a command name: its candidates come back.
-      return true;
-    }
-    composing = { mode: 'math', text: '', raw: null, page: 0, list: [], start: null };
-    enterRaw(raw, caret === 'end' ? raw.length : caret);
+    composing = { mode: 'math', raw, caret: caret === 'end' ? raw.length : Math.min(caret, raw.length), quiet: false,
+      text: '', page: 0, list: [], start: null };
+    refreshComposition();
     return true;
   }
 
@@ -2715,27 +2716,53 @@
     return null;
   }
 
-  /** Switches the composition to raw text; `caret` counts from the start (negative: back from the end). */
-  function enterRaw(raw, caret, entry = null) {
-    composing.raw = raw;
-    composing.caret = caret < 0 ? raw.length + caret : caret;
-    composing.rawEntry = entry;
+  /** The command nearest before the caret in raw text: where its backslash is, and its letters. */
+  function commandBeforeCaret() {
+    const before = composing.raw.slice(0, composing.caret);
+    const at = before.lastIndexOf('\\');
+    return at < 0 ? null : { at, name: /^[a-zA-Z]*/.exec(before.slice(at + 1))[0] };
+  }
+
+  /**
+   * Shows the raw text, and the candidates for the command before the caret; after a font command
+   * was chosen they stay away (quiet) until another \\ is typed, so that its argument can be typed.
+   */
+  function refreshComposition() {
+    if (composing.mode !== 'math') { renderCandidates(); return; }
+    const command = composing.quiet ? null : commandBeforeCaret();
+    if (command) {
+      if (composing.text !== command.name) composing.page = 0;
+      composing.text = command.name;
+      renderCandidates();
+      return;
+    }
+    composing.list = [];
     $('candidates').hidden = true;
     updateInlinePreedit();
   }
 
-  /** Enter in raw text: its LaTeX goes into the equation (a font command left empty keeps its slot). */
+  /** Enter: the raw text becomes math (a command name on its own: that command, or upright text). */
   function commitRaw() {
     const { raw, rawEntry } = composing;
+    const name = /^\\([a-zA-Z]*)$/.exec(raw)?.[1];
+    if (name !== undefined) {
+      if (!name) { closeComposition(); return; }
+      const exact = candidatesFor(name).find(entry => entry.name === name);
+      if (exact) { chooseCandidate(exact); return; }
+      closeComposition();
+      mathfield?.focus();
+      insertLatex(`\\mathrm{${name}}`); // \\d → \\mathrm{d}, as in AxMath.
+      return;
+    }
     closeComposition();
     mathfield?.focus();
     const command = /^\\([a-zA-Z]+)\{([^{}]*)\}$/.exec(raw);
-    if (command && !command[2].trim() && rawEntry) {
-      if (rawEntry.item) insertItem(rawEntry.item);
+    if (command && !command[2].trim() && rawEntry?.name === command[1]) {
+      if (rawEntry.item) insertItem(rawEntry.item); // A font command left empty keeps its slot.
       else insertLatex(rawEntry.latex);
       return;
     }
-    // Spaces count in text (\text{a b}); in a math font they don't, and are left out as AxMath does.
+    // Spaces count in text (\\text{a b}); in a math font they don't, and are left out as AxMath does.
     const latex = command && !/^(text|mbox)/.test(command[1]) ? `\\${command[1]}{${command[2].replace(/\s+/g, '')}}` : raw;
     if (latex.trim()) insertLatex(latex.replace(/#/g, '\\#'));
   }
@@ -2752,13 +2779,9 @@
     }).join('');
   }
 
-  /**
-   * In the equation the typed command is real, temporary content: blue raw text such as \mu that
-   * takes the place of the slot or selection, as classic editors show it. It is never reported to
-   * the document; choosing a candidate or cancelling removes it.
-   */
+  /** The raw text in the equation, in two parts so that MathLive's caret sits at the raw caret. */
   function updateInlinePreedit() {
-    const shown = composing.raw === undefined || composing.raw === null ? composing.text : `${composing.raw}\u0000${composing.caret}`;
+    const shown = `${composing.raw}\u0000${composing.caret}`;
     if (composing.preedit === shown) return;
     const model = fieldModel();
     if (!model) return;
@@ -2769,22 +2792,14 @@
     } else {
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
-    const color = RAW_COLOR;
     const options = { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false };
-    if (composing.raw === undefined || composing.raw === null) {
-      const raw = composing.text ? `\\backslash\\mathrm{${composing.text}}` : '\\backslash';
-      mathfield.insert(`\\textcolor{${color}}{${raw}}`, options);
-      composing.end = mathfield.position;
-    } else {
-      // Raw text in two parts, so that the caret can sit between them.
-      const left = composing.raw.slice(0, composing.caret);
-      const right = composing.raw.slice(composing.caret);
-      if (left) mathfield.insert(`\\textcolor{${color}}{\\mathrm{${rawDisplay(left)}}}`, options);
-      const caret = mathfield.position;
-      if (right) mathfield.insert(`\\textcolor{${color}}{\\mathrm{${rawDisplay(right)}}}`, options);
-      composing.end = mathfield.position;
-      mathfield.position = caret;
-    }
+    const left = composing.raw.slice(0, composing.caret);
+    const right = composing.raw.slice(composing.caret);
+    if (left) mathfield.insert(`\\textcolor{${RAW_COLOR}}{\\mathrm{${rawDisplay(left)}}}`, options);
+    const caret = mathfield.position;
+    if (right) mathfield.insert(`\\textcolor{${RAW_COLOR}}{\\mathrm{${rawDisplay(right)}}}`, options);
+    composing.end = mathfield.position;
+    mathfield.position = caret;
     composing.preedit = shown;
   }
 
@@ -2814,44 +2829,44 @@
 
   function chooseCandidate(entry) {
     const state = composing;
-    if (state?.mode === 'math' && keepsName(entry)) return enterArgument(entry);
-    closeComposition();
-    if (!state || !entry) return;
+    if (!state || !entry) { closeComposition(); return; }
     if (state.mode === 'code') {
+      closeComposition();
       codeArea.focus();
       codeArea.setRangeText('', state.start, codeArea.selectionStart, 'end');
       insertIntoCode(entry.item ? entry.item.latex : entry.latex);
       return;
     }
-    mathfield?.focus();
-    if (entry.item) insertItem(entry.item);
-    else insertLatex(entry.latex);
-  }
-
-  /**
-   * Enter, as in AxMath: the command as typed if it exists (in its own form: \mathbb{…}, not
-   * \mathbb{R}); any other name becomes upright text, \d → \mathrm{d}; a lone backslash, nothing.
-   */
-  function commitTyped() {
-    const state = composing;
-    if (!state) return;
-    const exact = state.list.find(entry => entry.name === state.text);
-    if (exact) return chooseCandidate(exact);
-    closeComposition();
-    if (state.text) {
-      mathfield?.focus();
-      insertLatex(`\\mathrm{${state.text}}`);
+    // The candidate takes the place of the command before the caret, from its backslash on.
+    const command = commandBeforeCaret() ?? { at: 0 };
+    const before = state.raw.slice(0, command.at);
+    const after = state.raw.slice(state.caret);
+    if (keepsName(entry)) {
+      // A font command or accent stays raw text, \\mathrm{|}, while its argument is typed.
+      const opening = `\\${entry.name}{`;
+      Object.assign(state, { raw: `${before}${opening}}${after}`, caret: before.length + opening.length, quiet: true, rawEntry: entry });
+      refreshComposition();
+      return;
     }
+    closeComposition();
+    mathfield?.focus();
+    if (!before.trim() && !after.trim()) {
+      if (entry.item) insertItem(entry.item);
+      else insertLatex(entry.latex);
+      return;
+    }
+    // Raw text around it becomes math with it, as in AxMath (\\alpha+\\be, Space: α+β).
+    insertLatex(`${before}${(entry.item?.latex ?? entry.latex).replace(/#@|#[0-9]/g, '#?')}${after}`);
   }
 
-  /** Keys while candidates are shown. Returns true if the key was used. */
+  /** Keys while composing. Returns true if the key was used. */
   function handleCompositionKey(event) {
     const { key } = event;
     if (['Shift', 'Alt', 'Meta', 'Control', 'CapsLock', 'Fn'].includes(key)) return true; // A modifier on its own.
-    if (event.metaKey || event.ctrlKey || event.altKey) { closeComposition(); return false; }
     const page = delta => { composing.page += delta; renderCandidates(); return true; };
     const choose = index => { chooseCandidate(composing.list[composing.page * PAGE_SIZE + index]); return true; };
     if (composing.mode === 'code') {
+      if (event.metaKey || event.ctrlKey || event.altKey) { closeComposition(); return false; }
       // Letters and Backspace edit the text itself; the input event refreshes the candidates.
       if (key === ' ') return composing.list.length ? choose(0) : (closeComposition(), false);
       if (/^[1-8]$/.test(key)) return composing.page * PAGE_SIZE + Number(key) - 1 < composing.list.length ? choose(Number(key) - 1) : false;
@@ -2860,65 +2875,45 @@
       if (key === ',' || key === 'PageUp') return page(-1);
       return false;
     }
-    if (composing.raw !== undefined && composing.raw !== null) {
-      // Editing raw text (see enterArgument).
-      const { raw, caret } = composing;
-      const edit = (text, at) => { composing.raw = text; composing.caret = at; updateInlinePreedit(); return true; };
-      switch (key) {
-        case 'Enter': commitRaw(); return true;
-        case 'Escape': closeComposition(); return true;
-        case 'ArrowLeft':
-          if (!caret) { // Out of the raw text, which stays as it is.
-            const parked = parkComposition();
-            if (parked) mathfield.position = parked.start;
-            return true;
-          }
-          return edit(raw, caret - 1);
-        case 'ArrowRight': return edit(raw, Math.min(raw.length, caret + 1));
-        case 'Home': case 'ArrowUp': return edit(raw, 0);
-        case 'End': case 'ArrowDown': return edit(raw, raw.length);
-        case 'Backspace':
-          if (!caret) return true;
-          if (raw.length === 1) { closeComposition(); return true; }
-          return edit(raw.slice(0, caret - 1) + raw.slice(caret), caret - 1);
-        case 'Delete':
-          return caret < raw.length ? edit(raw.slice(0, caret) + raw.slice(caret + 1), caret) : true;
-        default:
-          // Braces come in pairs, as when a command was chosen: { opens {|}, } steps over its partner.
-          if (key === '}' && raw[caret] === '}') return edit(raw, caret + 1);
-          if (key === '{') return edit(`${raw.slice(0, caret)}{}${raw.slice(caret)}`, caret + 1);
-          if (key.length === 1) return edit(raw.slice(0, caret) + key + raw.slice(caret), caret + 1);
-          return true;
-      }
-    }
-    if (/^[a-zA-Z]$/.test(key)) { composing.text += key; composing.page = 0; renderCandidates(); return true; }
-    if (key === '{' && composing.text) { enterRaw(`\\${composing.text}{}`, -1); return true; } // \name{ … typed by hand.
+    // A shortcut leaves the raw text where it is and does its work.
+    if (event.metaKey || event.ctrlKey || event.altKey) { parkComposition(); return false; }
+    const { raw, caret } = composing;
+    const edit = (text, at) => { composing.raw = text; composing.caret = at; refreshComposition(); return true; };
+    const offered = !$('candidates').hidden && composing.list.length > 0;
     switch (key) {
-      case 'Backspace':
-        if (!composing.text) closeComposition();
-        else { composing.text = composing.text.slice(0, -1); composing.page = 0; renderCandidates(); }
-        return true;
-      case 'Tab': return true; // Tab does not choose (Space and the digits do).
-      case ' ':
-        if (composing.list.length) return choose(0);
-        commitTyped();
-        return true;
-      case 'Enter': commitTyped(); return true;
+      case 'Enter': commitRaw(); return true;
       case 'Escape': closeComposition(); return true;
-      case '.': case 'PageDown': return page(1);
-      case ',': case 'PageUp': return page(-1);
-      case 'ArrowLeft': enterRaw(`\\${composing.text}`, -1); return true; // The name is raw text: move into it.
-      case 'ArrowRight': return true;
-      case 'ArrowUp': case 'ArrowDown': return true;
-      case '\\': commitTyped(); startComposition('math'); return true;
-      default:
-        if (/^[1-8]$/.test(key)) {
-          if (composing.page * PAGE_SIZE + Number(key) - 1 < composing.list.length) return choose(Number(key) - 1);
+      case 'Tab': return true; // Tab does not choose (Space and the digits do).
+      case 'ArrowLeft':
+        if (!caret) { // Out of the raw text, which stays as it is.
+          const parked = parkComposition();
+          if (parked) mathfield.position = parked.start;
           return true;
         }
-        if (key.length === 1) { commitTyped(); return false; } // Another character: keep the command and type on.
-        return false;
+        return edit(raw, caret - 1);
+      case 'ArrowRight': return edit(raw, Math.min(raw.length, caret + 1));
+      case 'Home': case 'ArrowUp': return edit(raw, 0);
+      case 'End': case 'ArrowDown': return edit(raw, raw.length);
+      case 'PageDown': return offered ? page(1) : true;
+      case 'PageUp': return offered ? page(-1) : true;
+      case 'Backspace':
+        if (!caret) return true;
+        if (raw.length === 1) { closeComposition(); return true; }
+        return edit(raw.slice(0, caret - 1) + raw.slice(caret), caret - 1);
+      case 'Delete':
+        return caret < raw.length ? edit(raw.slice(0, caret) + raw.slice(caret + 1), caret) : true;
+      default:
     }
+    if (offered) {
+      // With candidates shown, Space and the digits choose, , and . turn the page, as in AxMath.
+      if (key === ' ') return choose(0);
+      if (/^[1-8]$/.test(key) && composing.page * PAGE_SIZE + Number(key) - 1 < composing.list.length) return choose(Number(key) - 1);
+      if (key === '.') return page(1);
+      if (key === ',') return page(-1);
+    }
+    if (key === '\\') composing.quiet = false; // A new command: its candidates show.
+    if (key.length === 1) return edit(raw.slice(0, caret) + key + raw.slice(caret), caret + 1);
+    return true;
   }
 
   /** In the code pane, a \name before the caret shows candidates. */
@@ -3500,6 +3495,48 @@
     replaceSpan('');
   }, true);
 
+  // A click on the raw text being typed moves its caret there; a click anywhere else leaves the
+  // raw text in the equation (as in AxMath) and places the caret as usual. A click on raw text left
+  // in the equation opens it with the caret at the click. Positions come from the glyphs under the
+  // pointer: when the click is handled, MathLive (in WebKit) has not placed its caret yet.
+  // Registered before the drag code's own pointerdown handler, which must not see a click it takes.
+  document.addEventListener('pointerdown', event => {
+    if ($('candidates').contains(event.target) || !lines.some(field => event.composedPath().includes(field))) return;
+    const state = composing?.mode === 'math' ? composing : null;
+    const point = { x: event.clientX, y: event.clientY };
+    if (state) {
+      const index = preeditIndexAt(state, point.x, point.y);
+      if (index === null) {
+        // This click is ours: the raw text stays, then the caret goes where the click was (left to
+        // MathLive or the drag code, the click would be measured against the line before the change).
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const target = lines.find(field => event.composedPath().includes(field));
+        parkComposition();
+        requestAnimationFrame(() => {
+          const line = lines.indexOf(target);
+          if (line < 0) return;
+          const offset = target.getOffsetFromPoint?.(point.x, point.y) ?? -1;
+          focusAt(line, offset >= 0 ? offset : offsetAtX(target, point.x));
+          syncFromField();
+        });
+        return;
+      }
+      afterPointer(() => {
+        if (composing !== state) return;
+        state.caret = index;
+        state.preedit = null; // Drawn again, which puts MathLive's caret there too.
+        refreshComposition();
+      });
+      return;
+    }
+    afterPointer(() => {
+      const model = fieldModel();
+      const hit = !composing && model && rawAtPoint(model, point.x, point.y);
+      if (hit) openRaw(hit.atom, hit.index);
+    });
+  }, true);
+
   // Captured: MathLive keeps pointer events inside a line to itself. The other lines' selections
   // collapse once the click has moved the focus (changing them earlier would keep it where it was).
   document.addEventListener('pointerdown', event => {
@@ -3621,34 +3658,34 @@
   // (Our own cancel, sent to MathLive when taking a drag over, is not a real one.)
   document.addEventListener('pointercancel', event => { if (event.isTrusted && event.pointerId === drag?.pointerId) endDrag(); }, true);
   window.addEventListener('blur', endDrag);
-  // A click while raw text is being typed leaves it in the equation (as in AxMath); a click on raw
-  // text opens it with the caret at the click. Done once the click has placed the caret.
-  document.addEventListener('pointerdown', event => {
-    if ($('candidates').contains(event.target) || !lines.some(field => event.composedPath().includes(field))) return;
-    const state = composing?.mode === 'math' ? composing : null;
-    const point = { x: event.clientX, y: event.clientY };
-    const cancel = () => document.removeEventListener('pointerup', afterClick, true);
+  /** Runs `action` once the current click is over (not when the system cancels it). */
+  function afterPointer(action) {
+    const done = () => { document.removeEventListener('pointercancel', cancel, true); setTimeout(action); };
+    const cancel = () => document.removeEventListener('pointerup', done, true);
+    document.addEventListener('pointerup', done, { once: true, capture: true });
     document.addEventListener('pointercancel', cancel, { once: true, capture: true });
-    const afterClick = () => setTimeout(() => {
-      document.removeEventListener('pointercancel', cancel, true);
-      if (state && composing === state) {
-        const clicked = mathfield;
-        const model = fieldModel(state.field);
-        const at = clicked === state.field ? Math.max(...model.selection.ranges[0]) : null;
-        const parked = parkComposition();
-        if (parked && at !== null) {
-          const shift = parked.end - parked.oldEnd;
-          state.field.position = at <= parked.start ? at : at >= parked.oldEnd ? at + shift : parked.end;
-        }
-        if (clicked !== state.field) { clicked.focus(); mathfield = clicked; }
-        return;
-      }
-      const model = fieldModel();
-      const hit = !composing && model && rawAtPoint(model, point.x, point.y);
-      if (hit) openRaw(hit.atom, hit.index);
-    });
-    document.addEventListener('pointerup', afterClick, { once: true, capture: true });
-  }, true);
+  }
+
+  /** The raw caret for a click on the raw text being typed (one atom per character), or null. */
+  function preeditIndexAt(state, x, y) {
+    if (!state.field?.isConnected || state.end === undefined) return null;
+    const model = fieldModel(state.field);
+    const boxes = [];
+    for (let offset = state.start + 1; offset <= state.end; offset += 1) {
+      boxes.push(state.field._mathfield.getHTMLElement?.(model.at(offset))?.getBoundingClientRect() ?? null);
+    }
+    const shown = boxes.filter(box => box && box.width > 0);
+    if (!shown.length) return null;
+    const left = Math.min(...shown.map(box => box.left)) - 4;
+    const right = Math.max(...shown.map(box => box.right)) + 4;
+    const top = Math.min(...shown.map(box => box.top)) - 6;
+    const bottom = Math.max(...shown.map(box => box.bottom)) + 6;
+    if (x < left || x > right || y < top || y > bottom) return null;
+    let index = 0;
+    boxes.forEach((box, at) => { if (box && box.width > 0 && x > box.left + box.width / 2) index = at + 1; });
+    return Math.min(index, state.raw.length);
+  }
+
   document.addEventListener('mousedown', event => {
     if (composing && !$('candidates').contains(event.target) && !lines.some(field => event.composedPath().includes(field))) parkComposition();
     if (!exportMenu.hidden && !exportMenu.contains(event.target)) exportMenu.hidden = true;
