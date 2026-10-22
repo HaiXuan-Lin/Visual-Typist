@@ -165,6 +165,9 @@ struct EditorCommands: Commands {
             Toggle("Display Style", isOn: Binding(
                 get: { session?.document.displayStyle ?? true },
                 set: { session?.setDisplayStyle($0) }))
+            Toggle("Align Lines at =", isOn: Binding(
+                get: { session?.document.alignment == .equals },
+                set: { session?.setAlignment($0 ? .equals : .left) }))
             Toggle("Transparent Background", isOn: Binding(
                 get: { session?.document.transparentBackground ?? true },
                 set: { session?.document.transparentBackground = $0 }))

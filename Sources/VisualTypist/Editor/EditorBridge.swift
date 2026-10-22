@@ -130,7 +130,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             latex: latex,
             fontSize: body["fontSize"] as? Double ?? 32,
             colorHex: body["color"] as? String ?? "#17191D",
-            displayStyle: body["displayStyle"] as? Bool ?? true)
+            displayStyle: body["displayStyle"] as? Bool ?? true,
+            alignment: (body["alignment"] as? String).flatMap(LineAlignment.init(rawValue:)) ?? .left)
     }
 
     // MARK: Calls into the page
@@ -179,7 +180,7 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     private static func state(_ document: EquationDocument) -> [String: Any] {
         ["latex": document.latex, "fontSize": document.fontSize, "color": document.colorHex,
-         "displayStyle": document.displayStyle]
+         "displayStyle": document.displayStyle, "alignment": document.alignment.rawValue]
     }
 
     // MARK: Navigation

@@ -28,6 +28,7 @@ final class EquationSession {
             self.document.latex = edited.latex
             self.document.fontSize = edited.fontSize
             self.document.colorHex = edited.colorHex
+            self.document.alignment = edited.alignment
         }
         bridge.onAction = { [weak self] name, body in self?.perform(name, body) }
         bridge.onError = { [weak self] message in self?.errorMessage = message }
@@ -133,6 +134,11 @@ final class EquationSession {
 
     func setDisplayStyle(_ enabled: Bool) {
         document.displayStyle = enabled
+        bridge.load(document)
+    }
+
+    func setAlignment(_ alignment: LineAlignment) {
+        document.alignment = alignment
         bridge.load(document)
     }
 

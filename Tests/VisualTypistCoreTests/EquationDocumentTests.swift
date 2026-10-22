@@ -6,7 +6,7 @@ struct EquationDocumentTests {
     @Test func roundTripPreservesEverySetting() throws {
         let document = EquationDocument(
             latex: "  \\begin{aligned}\nE &= mc^2 \\\\\np &= mv\n\\end{aligned}  ",
-            fontSize: 47.5, colorHex: "#A1B2C3", displayStyle: false, transparentBackground: false)
+            fontSize: 47.5, colorHex: "#A1B2C3", displayStyle: false, alignment: .equals, transparentBackground: false)
         let data = try document.jsonData()
         #expect(try EquationDocument.read(data: data, fileExtension: ".VTEQ") == document)
         #expect(String(decoding: data, as: UTF8.self).contains(#""schemaVersion" : 1"#))
@@ -15,6 +15,43 @@ struct EquationDocumentTests {
     @Test func optionalSettingsUseDefaults() throws {
         let json = #"{"schemaVersion":1,"latex":"a+b"}"#
         #expect(try EquationDocument.read(data: Data(json.utf8), fileExtension: "vteq") == EquationDocument(latex: "a+b"))
+    }
+
+    @Test func unknownAlignmentReadsAsLeft() throws {
+        let json = #"{"schemaVersion":1,"latex":"a","alignment":"diagonal"}"#
+        #expect(try EquationDocument.read(data: Data(json.utf8), fileExtension: "vteq").alignment == .left)
+    }
+
+    @Test func linesAlignAtTheirFirstTopLevelRelation() {
+        func at(_ line: String) -> Int? {
+            EquationDocument.alignmentIndex(line).map { line.distance(from: line.startIndex, to: $0) }
+        }
+        #expect(at("a=b=c") == 1)
+        #expect(at(#"x_{i=1}+y\le z"#) == 9)
+        #expect(at(#"f\left<x\right>=1"#) == 15)
+        #expect(at(#"p\not=q"#) == 1)
+        #expect(at(#"\text{a=b}+c=d"#) == 12)
+        #expect(at("(m=n)+p") == 2)
+        #expect(at("a≤b") == 1)
+        for line in [#"k\overset{!}{=}b"#, #"x\in A"#, #"a\to b"#, #"\frac{a=b}{c}"#, #"\left(m=n\right)"#,
+                     #"\begin{aligned}a&=b\end{aligned}"#, #"a\not<b"#, #"a\propto b"#, ""] {
+            #expect(at(line) == nil, "\(line)")
+        }
+    }
+
+    @Test func alignedDocumentsExportAlignedAtTheirRelations() {
+        let document = EquationDocument(latex: "a=b+c\nd+e+g\\leq f\nx+y\n\\\\\n\n\\\\\n=z", alignment: .equals)
+        #expect(document.standaloneTeX().contains(#"""
+            \begin{array}{r@{}l}
+            \displaystyle a\mathrel{}&\displaystyle =b+c \\
+            \displaystyle d+e+g\mathrel{}&\displaystyle \leq f \\
+            &\displaystyle x+y \\
+            &\strut \\
+            &\displaystyle =z
+            \end{array}
+            """#))
+        // Without any relation the lines stay at the left.
+        #expect(EquationDocument(latex: "x\ny", alignment: .equals).standaloneTeX().contains(#"\begin{array}{l}"#))
     }
 
     @Test func unknownSchemaIsRejected() {

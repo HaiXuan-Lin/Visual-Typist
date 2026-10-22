@@ -1,5 +1,11 @@
 import Foundation
 
+/// How the lines of a document stand: at the left, or at their first relation (AxMath's Align At
+/// Equal Symbols; see `EquationDocument.alignmentIndex`).
+public enum LineAlignment: String, Codable, Sendable {
+    case left, equals
+}
+
 /// An equation document as saved to disk (`.vteq`, JSON).
 public struct EquationDocument: Codable, Equatable, Sendable {
     public static let schemaVersion = 1
@@ -10,6 +16,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
     public var fontSize: Double
     public var colorHex: String
     public var displayStyle: Bool
+    public var alignment: LineAlignment
     public var transparentBackground: Bool
 
     public init(
@@ -17,12 +24,14 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         fontSize: Double = 32,
         colorHex: String = "#17191D",
         displayStyle: Bool = true,
+        alignment: LineAlignment = .left,
         transparentBackground: Bool = true
     ) {
         self.latex = latex
         self.fontSize = fontSize
         self.colorHex = colorHex
         self.displayStyle = displayStyle
+        self.alignment = alignment
         self.transparentBackground = transparentBackground
     }
 
@@ -41,7 +50,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
     // MARK: Coding
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, latex, fontSize, colorHex, displayStyle, transparentBackground
+        case schemaVersion, latex, fontSize, colorHex, displayStyle, alignment, transparentBackground
     }
 
     public init(from decoder: Decoder) throws {
@@ -55,6 +64,8 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? defaults.fontSize
         colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex) ?? defaults.colorHex
         displayStyle = try container.decodeIfPresent(Bool.self, forKey: .displayStyle) ?? defaults.displayStyle
+        // An alignment this version doesn't know reads as the default.
+        alignment = (try? container.decodeIfPresent(LineAlignment.self, forKey: .alignment)) ?? defaults.alignment
         transparentBackground = try container.decodeIfPresent(Bool.self, forKey: .transparentBackground)
             ?? defaults.transparentBackground
         try validate()
@@ -67,6 +78,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         try container.encode(fontSize, forKey: .fontSize)
         try container.encode(colorHex, forKey: .colorHex)
         try container.encode(displayStyle, forKey: .displayStyle)
+        try container.encode(alignment, forKey: .alignment)
         try container.encode(transparentBackground, forKey: .transparentBackground)
     }
 
@@ -104,15 +116,29 @@ public struct EquationDocument: Codable, Equatable, Sendable {
             ? String(colorHex.dropFirst()).uppercased() : "17191D"
         let size = fontSize.isFinite ? min(Self.fontSizes.upperBound, max(Self.fontSizes.lowerBound, fontSize)) : 32
         let style = displayStyle ? #"\displaystyle"# : #"\textstyle"#
-        // Several lines become a left-aligned array, one equation per row. Blank lines between
-        // equations stay (one line high); blank lines around them go.
+        // Several lines become a left-aligned array, one equation per row, or an array aligned at
+        // each line's first relation (see alignmentIndex). Blank lines between equations stay (one
+        // line high); blank lines around them go.
         var rows = lines.map(Self.trimmed)
         while rows.first?.isEmpty == true { rows.removeFirst() }
         while rows.last?.isEmpty == true { rows.removeLast() }
         let rowStyle = displayStyle ? #"\displaystyle "# : ""
-        let body = rows.count > 1
-            ? "\\begin{array}{l}\n" + rows.map { $0.isEmpty ? #"\strut"# : rowStyle + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}"
-            : latex
+        let splits = rows.map(Self.alignmentIndex)
+        let body: String
+        if rows.count <= 1 {
+            body = latex
+        } else if alignment == .equals, splits.contains(where: { $0 != nil }) {
+            // The empty relation keeps TeX's space between the left side and the relation that
+            // starts the right one.
+            body = "\\begin{array}{r@{}l}\n" + zip(rows, splits).map { row, split in
+                guard !row.isEmpty else { return #"&\strut"# }
+                let at = split ?? row.startIndex
+                let left = row[..<at].trimmingCharacters(in: .whitespaces)
+                return (left.isEmpty ? "" : rowStyle + left + #"\mathrel{}"#) + "&" + rowStyle + row[at...]
+            }.joined(separator: " \\\\\n") + "\n\\end{array}"
+        } else {
+            body = "\\begin{array}{l}\n" + rows.map { $0.isEmpty ? #"\strut"# : rowStyle + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}"
+        }
         return """
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}
@@ -160,6 +186,62 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         }
         if let current { result.append(Self.withoutLineBreak(current)) }
         return result.isEmpty ? [""] : result
+    }
+
+    /// Relations a line is aligned at, as in AxMath's Align At Equal Symbols: =, <, ≤, ≈, ≡, ≺ and
+    /// their kin (not ∈, ⊂, ∝, →, ⊥ or negated relations, except ≠). The page uses the same list.
+    static let alignmentRelations = Set([
+        "=", "<", ">", #"\lt"#, #"\gt"#, #"\ne"#, #"\neq"#, #"\le"#, #"\leq"#, #"\ge"#, #"\geq"#,
+        #"\leqslant"#, #"\geqslant"#, #"\leqq"#, #"\geqq"#, #"\ll"#, #"\gg"#, #"\approx"#, #"\thickapprox"#,
+        #"\approxeq"#, #"\equiv"#, #"\sim"#, #"\thicksim"#, #"\backsim"#, #"\backsimeq"#, #"\simeq"#, #"\cong"#,
+        #"\doteq"#, #"\doteqdot"#, #"\Doteq"#, #"\risingdotseq"#, #"\fallingdotseq"#, #"\eqcirc"#, #"\circeq"#,
+        #"\triangleq"#, #"\prec"#, #"\succ"#, #"\preceq"#, #"\succeq"#, #"\preccurlyeq"#, #"\succcurlyeq"#,
+        #"\curlyeqprec"#, #"\curlyeqsucc"#, #"\precsim"#, #"\succsim"#, #"\precapprox"#, #"\succapprox"#,
+        #"\lesssim"#, #"\gtrsim"#, #"\lessapprox"#, #"\gtrapprox"#, #"\lessgtr"#, #"\gtrless"#, #"\lesseqgtr"#,
+        #"\gtreqless"#, #"\lesseqqgtr"#, #"\gtreqqless"#, #"\lessdot"#, #"\gtrdot"#, #"\eqslantless"#, #"\eqslantgtr"#,
+    ]).union("≠≤≥⩽⩾≦≧≪≫≈≊≡∼∽⋍≃≅≐≑≓≒≖≗≜≺≻⪯⪰≼≽⋞⋟≾≿⪷⪸≲≳⪅⪆≶≷⋚⋛⪋⪌⋖⋗⪕⪖".map(String.init))
+
+    /// Where the line's first relation at its top level starts: beside a plain bracket, but not in
+    /// braces (fractions, scripts, \text…), \left…\right or an environment. `\not=` counts as ≠.
+    static func alignmentIndex(_ line: String) -> String.Index? {
+        var depth = 0, nested = 0, skip = false
+        var previous: (token: String, index: String.Index)?
+        var index = line.startIndex
+        while index < line.endIndex {
+            let start = index
+            var end = line.index(after: index)
+            if line[start] == "\\", end < line.endIndex {
+                if line[end].isASCII, line[end].isLetter {
+                    while end < line.endIndex, line[end].isASCII, line[end].isLetter { end = line.index(after: end) }
+                } else {
+                    end = line.index(after: end)
+                }
+            }
+            index = end
+            let token = String(line[start..<end])
+            if token.allSatisfy(\.isWhitespace) { continue }
+            if token == "{" {
+                if depth == 0 { skip = false } // The group is what the delimiter or script takes.
+                depth += 1
+            } else if token == "}" {
+                depth -= 1
+            } else if depth == 0, skip {
+                skip = false
+            } else if depth == 0 {
+                if token == #"\left"# || token == #"\begin"# { nested += 1 }
+                if token == #"\right"# || token == #"\end"# { nested -= 1 }
+                if token.range(of: #"^(\\(left|right|middle|[bB]igg?[lmr]?)|[_^])$"#, options: .regularExpression) != nil {
+                    skip = true // A delimiter or script follows.
+                } else if nested == 0 {
+                    let negated = previous?.token == #"\not"#
+                    if negated ? token == "=" : alignmentRelations.contains(token) {
+                        return negated ? previous?.index : start
+                    }
+                }
+            }
+            previous = (token, start)
+        }
+        return nil
     }
 
     /// Lines are separated by `\\` at the end of the line; the separator is not part of the line.

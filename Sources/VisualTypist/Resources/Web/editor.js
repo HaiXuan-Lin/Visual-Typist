@@ -13,7 +13,9 @@
   const EDIT_SCALE = 1.25; // The canvas shows equations a little larger than their export size.
   const DEFAULT_INK = '#17191D'; // Shown in the canvas as the theme's text color, so it reads in dark mode.
 
-  const state = { latex: '', fontSize: 32, color: DEFAULT_INK, displayStyle: true };
+  // `alignment` is how the lines stand: 'left', or 'equals' (at their first relation, as AxMath's
+  // Align At Equal Symbols; see alignLines).
+  const state = { latex: '', fontSize: 32, color: DEFAULT_INK, displayStyle: true, alignment: 'left' };
   const ui = { mode: 'symbols' };
   const paletteById = new Map(VT_PALETTE.flatMap(category => category.items.map(item => [item.id, item])));
 
@@ -173,7 +175,7 @@
   }
 
   // Commands that act on a ⌘A selection themselves; any other command ends it first.
-  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
+  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'alignEquals', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
     'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur', 'fontBlackboard']);
 
   // While raw text is typed in the equation, the moving shortcuts (⌥A, ⌥D…) move through it.
@@ -499,6 +501,7 @@
     lineStart: () => moveCaret('lineStart'),
     lineEnd: () => moveCaret('lineEnd'),
     toggleTheme: () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', { save: true }),
+    alignEquals: () => setAlignment(state.alignment === 'equals' ? 'left' : 'equals'),
     undo: () => stepHistory(-1),
     redo: () => stepHistory(1),
   };
@@ -519,6 +522,7 @@
     selectAll: 'Select all', deleteLine: 'Delete the line',
     cursorUp: 'Move up', cursorDown: 'Move down', cursorLeft: 'Move left', cursorRight: 'Move right',
     lineStart: 'Move to start of line', lineEnd: 'Move to end of line', toggleTheme: 'Light / dark theme',
+    alignEquals: 'Align lines at =',
   };
 
   /** Shows the light or dark theme (theme.js applies it); `save` keeps the choice in the app. */
@@ -994,6 +998,7 @@
       new MutationObserver(records => {
         tagSlots(field);
         markFences(field);
+        scheduleAlignment();
         // Not again for our own selection boxes (they are added to the content).
         if (records.some(record => ![...record.addedNodes, ...record.removedNodes].every(node => node.classList?.contains('vt-selection')) ||
             (record.type === 'attributes' && !record.target.classList?.contains('vt-selection')))) {
@@ -1018,6 +1023,7 @@
     lines.splice(lines.indexOf(field), 1);
     if (mathfield === field) mathfield = next ?? lines[0] ?? null;
     field.remove();
+    scheduleAlignment();
   }
 
   /**
@@ -2209,6 +2215,96 @@
 
   // ---------------------------------------------------------------- presentation
 
+  // ---------------------------------------------------------------- alignment at =
+  //
+  // AxMath's Align At Equal Symbols, as measured there: each line stands at its first relation of the
+  // equals kind (=, <, ≤, ≈, ≡, ≺…; not ∈, ⊂, ∝, →, ⊥, negated ones but ≠) at the line's top
+  // level: beside a plain bracket, but not inside a fraction, script, \left…\right or other
+  // structure. The relations' left edges share one column; a line without one starts at it.
+
+  const ALIGN_RELATIONS = new Set(['=', '<', '>', '\\lt', '\\gt', '\\ne', '\\neq', '\\le', '\\leq', '\\ge', '\\geq',
+    '\\leqslant', '\\geqslant', '\\leqq', '\\geqq', '\\ll', '\\gg', '\\approx', '\\thickapprox', '\\approxeq', '\\equiv',
+    '\\sim', '\\thicksim', '\\backsim', '\\backsimeq', '\\simeq', '\\cong', '\\doteq', '\\doteqdot', '\\Doteq',
+    '\\risingdotseq', '\\fallingdotseq', '\\eqcirc', '\\circeq', '\\triangleq', '\\prec', '\\succ', '\\preceq', '\\succeq',
+    '\\preccurlyeq', '\\succcurlyeq', '\\curlyeqprec', '\\curlyeqsucc', '\\precsim', '\\succsim', '\\precapprox',
+    '\\succapprox', '\\lesssim', '\\gtrsim', '\\lessapprox', '\\gtrapprox', '\\lessgtr', '\\gtrless', '\\lesseqgtr',
+    '\\gtreqless', '\\lesseqqgtr', '\\gtreqqless', '\\lessdot', '\\gtrdot', '\\eqslantless', '\\eqslantgtr',
+    ...'≠≤≥⩽⩾≦≧≪≫≈≊≡∼∽⋍≃≅≐≑≓≒≖≗≜≺≻⪯⪰≼≽⋞⋟≾≿⪷⪸≲≳⪅⪆≶≷⋚⋛⪋⪌⋖⋗⪕⪖']);
+  // A delimiter or script follows these; it is not a relation of the line (\left< … \right>, x_=).
+  const TAKES_TOKEN = /^(?:\\(?:left|right|middle|[bB]igg?[lmr]?)|[_^])$/;
+
+  /** Where the line's alignment relation starts in its LaTeX, or -1 (see above). For exports. */
+  function alignmentIndex(line) {
+    let depth = 0;   // Braces.
+    let nested = 0;  // \left…\right and \begin…\end.
+    let skip = false;
+    let previous = null;
+    for (const match of line.matchAll(/\\[a-zA-Z]+|\\.|\s+|[\s\S]/gu)) {
+      const token = match[0];
+      if (/^\s/.test(token)) continue;
+      if (token === '{') {
+        if (depth === 0) skip = false; // The group is what the delimiter or script takes.
+        depth += 1;
+      } else if (token === '}') depth -= 1;
+      else if (depth === 0 && skip) skip = false;
+      else if (depth === 0) {
+        if (token === '\\left' || token === '\\begin') nested += 1;
+        else if (token === '\\right' || token === '\\end') nested -= 1;
+        if (TAKES_TOKEN.test(token)) skip = true;
+        // \not= is ≠; the other negated relations are not alignment points.
+        else if (nested === 0 && (ALIGN_RELATIONS.has(token) && previous?.[0] !== '\\not' || (token === '=' && previous?.[0] === '\\not'))) {
+          return previous?.[0] === '\\not' ? previous.index : match.index;
+        }
+      }
+      previous = match;
+    }
+    return -1;
+  }
+
+  /** The line's alignment relation in its field, or null. Text and font-styled symbols are not. */
+  function alignmentAtom(field) {
+    const model = fieldModel(field);
+    for (const atom of model?.root.body ?? []) {
+      // Typed symbols carry the variant 'normal'; \mathrm{=} adds a variant style, \mathbb{} its own variant.
+      if (atom.mode === 'text' || atom.style?.variantStyle || atom.style?.color ||
+          !['normal', 'ams', undefined].includes(atom.style?.variant)) continue;
+      if (ALIGN_RELATIONS.has(atom.command)) return atom;
+      if (atom.command === '\\not' && /^\\not\s*=$/.test(atom.verbatimLatex ?? '')) return atom;
+    }
+    return null;
+  }
+
+  let alignFrame = 0;
+  function scheduleAlignment() {
+    alignFrame ||= requestAnimationFrame(alignLines);
+  }
+
+  /** Indents each line so that their alignment relations line up (or none, aligned left). */
+  function alignLines() {
+    alignFrame = 0;
+    const points = lines.map(field => {
+      const atom = state.alignment === 'equals' ? alignmentAtom(field) : null;
+      const content = atom && field.shadowRoot?.querySelector('.ML__content');
+      const box = content && field._mathfield.getHTMLElement?.(atom)?.getBoundingClientRect();
+      return box ? box.left - content.getBoundingClientRect().left : 0;
+    });
+    const column = Math.max(0, ...points);
+    lines.forEach((field, index) => {
+      const indent = Math.round(column - points[index]);
+      if (Number(field.style.getPropertyValue('--vt-indent').replace('px', '') || 0) !== indent) {
+        field.style.setProperty('--vt-indent', `${indent}px`);
+      }
+    });
+  }
+
+  function setAlignment(alignment) {
+    state.alignment = alignment;
+    applyPresentation();
+    notifyChange();
+    scheduleValidation();
+    return true;
+  }
+
   function styleField(field) {
     field.style.fontSize = `${Math.round(state.fontSize * EDIT_SCALE)}px`;
     // The default ink follows the theme on screen; any other color is shown as chosen.
@@ -2220,6 +2316,8 @@
     lines.forEach(styleField);
     $('font-size').value = String(state.fontSize);
     $('color').value = state.color.toLowerCase();
+    document.querySelector('#toolbar [data-command="alignEquals"]')?.setAttribute('aria-pressed', String(state.alignment === 'equals'));
+    scheduleAlignment();
   }
 
   function setMode(mode, { focus = false } = {}) {
@@ -3053,7 +3151,9 @@
       const text = await file.text();
       try {
         const data = /\.(vteq|json)$/i.test(file.name) ? JSON.parse(text) : { latex: text };
-        await window.vt.setState({ latex: data.latex ?? '', fontSize: data.fontSize, color: data.colorHex, displayStyle: data.displayStyle });
+        const settings = { fontSize: data.fontSize, color: data.colorHex, displayStyle: data.displayStyle, alignment: data.alignment };
+        await window.vt.setState({ latex: data.latex ?? '',
+          ...Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined)) });
         toast(`Opened ${file.name}`);
       } catch (error) {
         toast(`Can't open ${file.name}`);
@@ -3069,7 +3169,7 @@
         case 'open': webOpen(); return;
         case 'save': {
           const document_ = { schemaVersion: 1, latex: state.latex, fontSize: state.fontSize, colorHex: state.color,
-            displayStyle: state.displayStyle, transparentBackground: false };
+            displayStyle: state.displayStyle, alignment: state.alignment, transparentBackground: false };
           download('Equation.vteq', JSON.stringify(document_, null, 2), 'application/json');
           return;
         }
@@ -3387,7 +3487,8 @@
   }
 
   function normalizedState(update, base = state) {
-    const next = { latex: base.latex, fontSize: base.fontSize, color: base.color, displayStyle: base.displayStyle };
+    const next = { latex: base.latex, fontSize: base.fontSize, color: base.color, displayStyle: base.displayStyle,
+      alignment: base.alignment };
     if (Object.hasOwn(update, 'latex')) next.latex = String(update.latex ?? '');
     if (next.latex.length > 100000) throw new Error('The equation exceeds the 100,000 character limit.');
     if (Object.hasOwn(update, 'fontSize')) next.fontSize = Number(update.fontSize);
@@ -3396,11 +3497,15 @@
     }
     if (Object.hasOwn(update, 'color')) next.color = normalizedColor(update.color);
     if (Object.hasOwn(update, 'displayStyle')) next.displayStyle = !!update.displayStyle;
+    if (Object.hasOwn(update, 'alignment')) next.alignment = update.alignment === 'equals' ? 'equals' : 'left';
     return next;
   }
 
-  /** One TeX expression for the whole document: several lines become a left-aligned array. */
-  function documentTeX(latex, displayStyle) {
+  /**
+   * One TeX expression for the whole document: several lines become a left-aligned array, or one
+   * aligned at = (see alignLines) whose first column ends where each line's relation starts.
+   */
+  function documentTeX(latex, displayStyle, alignment = 'left') {
     // Trailing whitespace goes, except an escaped space (\ ) that the user typed.
     const trim = line => line.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, '');
     const rows = splitLines(cleanLatex(latex)).map(line => trim(portableLatex(line)));
@@ -3412,11 +3517,23 @@
       .map(line => line.replace(/\\text\{\\placeholder\{\}\}/g, '\\placeholder{}'));
     if (parts.length <= 1) return parts[0] ?? '';
     const style = displayStyle ? '\\displaystyle ' : '';
+    const splits = parts.map(alignmentIndex);
+    if (alignment === 'equals' && splits.some(at => at >= 0)) {
+      // An empty relation after the left side keeps TeX's space before the relation that starts the
+      // right. MathJax has no @{} between columns: the right side starts back over the 1em between them.
+      const rows = parts.map((line, index) => {
+        const at = Math.max(0, splits[index]);
+        const left = line.slice(0, at).trim();
+        const right = line.slice(at);
+        return `${left ? `${style}${left}\\mathrel{}` : ''}&${right === '\\strut' ? right : `${style}\\mkern-18mu ${right}`}`;
+      });
+      return `\\begin{array}{rl}${rows.join(' \\\\[0.4em] ')}\\end{array}`;
+    }
     return `\\begin{array}{l}${parts.map(line => style + line).join(' \\\\[0.4em] ')}\\end{array}`;
   }
 
   async function buildResult(snapshot) {
-    const latex = documentTeX(snapshot.latex, snapshot.displayStyle);
+    const latex = documentTeX(snapshot.latex, snapshot.displayStyle, snapshot.alignment);
     if (!latex) return { valid: false, empty: true, error: 'The equation is empty.' };
     try {
       resetTeXState();
