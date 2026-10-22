@@ -2827,7 +2827,8 @@
     const model = fieldModel(field);
     const moved = model?.selectionIsCollapsed && model.position !== state.start + state.caret ? model.position : null;
     field.selection = { ranges: [[state.start, state.end]] };
-    field.insert(`\\vtraw{${rawDisplay(state.raw)}}`, { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    field.insert(`\\vtraw{${rawDisplay(state.raw)}}`, { format: 'latex', mode: 'math', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false });
+    if (field.mode !== 'math') field.mode = 'math';
     const parked = { field, start: state.start, oldEnd: state.end, end: field.position };
     if (moved !== null && moved <= state.start) field.position = moved;
     else if (moved !== null && moved >= state.end) field.position = moved + parked.end - state.end;
@@ -2950,14 +2951,21 @@
     } else {
       mathfield.selection = { ranges: [[composing.start, composing.end]] };
     }
-    const options = { format: 'latex', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false };
+    const options = { format: 'latex', mode: 'math', insertionMode: 'replaceSelection', selectionMode: 'after', feedback: false };
     const left = composing.raw.slice(0, composing.caret);
     const right = composing.raw.slice(composing.caret);
-    if (left) mathfield.insert(`\\textcolor{${RAW_COLOR}}{\\mathrm{${rawDisplay(left)}}}`, options);
+    // Punctuation is shown as \text{,}; after it MathLive would switch to text mode and take the next
+    // part (and everything typed after) as text. The raw text stays math.
+    const insert = part => {
+      mathfield.insert(`\\textcolor{${RAW_COLOR}}{\\mathrm{${rawDisplay(part)}}}`, options);
+      if (mathfield.mode !== 'math') mathfield.mode = 'math';
+    };
+    if (left) insert(left);
     const caret = mathfield.position;
-    if (right) mathfield.insert(`\\textcolor{${RAW_COLOR}}{\\mathrm{${rawDisplay(right)}}}`, options);
+    if (right) insert(right);
     composing.end = mathfield.position;
     mathfield.position = caret;
+    if (mathfield.mode !== 'math') mathfield.mode = 'math';
     composing.preedit = shown;
   }
 
