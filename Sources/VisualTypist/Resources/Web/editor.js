@@ -2441,6 +2441,13 @@
   let composing = null; // { mode: 'math' | 'code', text, page, list, start }
   const glyphCache = new Map();
 
+  // Large operators are offered as AxMath offers them (its candidate data, Dat/AxTCMData.dat), each
+  // with its operand: \int{▢}, \int_{▢}{▢} and \int_{▢}^{▢}{▢}, listed as \int, \int_{} and \int_{}^{};
+  // multiple and contour integrals take a lower limit only. The bare symbol is not offered.
+  const LOWER_LIMIT_ONLY = ['iint', 'iiint', 'oint'];
+  const OPERATOR_COMMANDS = ['int', ...LOWER_LIMIT_ONLY, 'sum', 'prod', 'coprod', 'bigcup', 'bigcap', 'bigsqcup',
+    'bigvee', 'bigwedge', 'bigodot', 'bigoplus', 'bigotimes', 'biguplus'];
+
   function buildCommandIndex() {
     const entries = [];
     const seen = new Set();
@@ -2449,10 +2456,22 @@
       seen.add(entry.label);
       entries.push(entry);
     };
+    const shapeOf = latex => latex.replace(/#[@0-9?]/g, '').replace(/\s+/g, '');
+    const operatorShapes = new Set();
+    for (const name of OPERATOR_COMMANDS) {
+      const forms = [[`\\${name}{#0}`, `\\${name}`, 'operand'], [`\\${name}_{#0}{#?}`, `\\${name}_{}`, 'lower']];
+      if (!LOWER_LIMIT_ONLY.includes(name)) forms.push([`\\${name}_{#0}^{#?}{#?}`, `\\${name}_{}^{}`, 'lower']);
+      for (const [latex, label, caret] of forms) {
+        const item = { id: `operator:${latex}`, latex, caret };
+        operatorShapes.add(shapeOf(latex));
+        add({ name, label, item, preview: previewLatex(item) });
+      }
+    }
+    const offered = (name, latex) => !operatorShapes.has(shapeOf(latex)) && !(OPERATOR_COMMANDS.includes(name) && latex === `\\${name}`);
     for (const category of VT_PALETTE) {
       for (const item of category.items) {
         const name = /^\\([a-zA-Z]+)/.exec(item.latex)?.[1];
-        if (!name) continue;
+        if (!name || !offered(name, item.latex)) continue;
         const label = item.latex.replace(/#[@0-9?]/g, '').replace(/\s+/g, '');
         // Typed commands insert templates with editable slots. Applying an accent to the
         // preceding symbol belongs to the palette/shortcut action, not command completion.
@@ -2460,7 +2479,9 @@
         add({ name, label, item: commandItem, preview: previewLatex(item) });
       }
     }
-    for (const name of VT_COMMANDS) add({ name, label: `\\${name}`, latex: `\\${name}`, preview: `\\${name}` });
+    for (const name of VT_COMMANDS) {
+      if (offered(name, `\\${name}`)) add({ name, label: `\\${name}`, latex: `\\${name}`, preview: `\\${name}` });
+    }
     for (const latex of VT_COMMAND_TEMPLATES) {
       const item = { id: `command:${latex}`, latex };
       add({ name: /^\\([a-zA-Z]+)/.exec(latex)[1], label: latex.replace(/#[@0-9?]/g, ''), item, preview: previewLatex(item) });

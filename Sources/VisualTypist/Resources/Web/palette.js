@@ -31,7 +31,7 @@
         ['binom', '\\binom{#0}{#1}'],
         ['superscript', '^{#0}', { preview: '\\placeholder{}^{\\placeholder{}}' }],
         ['subscript', '_{#0}', { preview: '\\placeholder{}_{\\placeholder{}}' }],
-        ['subsup', '_{#?}^{#0}', { caret: 'upper', preview: '\\placeholder{}_{\\placeholder{}}^{\\placeholder{}}' }],
+        ['subsup', '_{#0}^{#?}', { caret: 'lower', preview: '\\placeholder{}_{\\placeholder{}}^{\\placeholder{}}' }],
         ['prescript', '{}_{#1}^{#2}{#0}', { preview: '{}_{\\placeholder{}}^{\\placeholder{}}\\placeholder{}' }],
         ['overset', '\\overset{#1}{#0}'],
         ['underset', '\\underset{#1}{#0}'],
