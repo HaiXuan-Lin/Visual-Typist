@@ -871,6 +871,8 @@
       background: var(--vt-caret); animation: vt-caret-blink 1.06s steps(1) infinite;
     }
     @keyframes vt-caret-blink { 50% { opacity: 0; } }
+      /* Text is shaded only while the caret types text in it (see markTextMode). */
+    .ML__container:not(.vt-text-mode) .ML__text { background: transparent !important; }
   `;
 
   /**
@@ -934,11 +936,17 @@
     container?.classList.toggle('vt-slot-selected', slotSelected);
     container?.classList.toggle('vt-inside-structure', !!(here?.parent && !here.parent.isRoot));
     container?.classList.toggle('vt-after-structure', isStructure(here));
+    markTextMode(field);
     for (const element of field.shadowRoot.querySelectorAll('.ML__content span')) {
       const isSlot = element.childElementCount === 0 && element.textContent === '▢';
       element.classList.toggle('vt-slot', isSlot);
       element.classList.toggle('vt-slot-active', isSlot && slotSelected && element.classList.contains('ML__selected'));
     }
+  }
+
+  /** Text (\text{…}) is shaded only while the caret types text, so leaving it (see crossTextEdge) shows. */
+  function markTextMode(field) {
+    field.shadowRoot?.querySelector('.ML__container')?.classList.toggle('vt-text-mode', field.mode === 'text');
   }
 
   async function createField({ scratch = false, before = null } = {}) {
@@ -967,6 +975,7 @@
         selectWholeAtoms();
       });
       field.addEventListener('focusin', () => { mathfield = field; });
+      field.addEventListener('mode-change', () => markTextMode(field));
     }
     const mounted = new Promise(resolve => field.addEventListener('mount', resolve, { once: true }));
     (scratch ? document.body : fieldHost).insertBefore(field, scratch ? null : before);
@@ -1637,6 +1646,7 @@
       mathfield.position = direction > 0 ? end : start;
       return true;
     }
+    if (crossTextEdge(model, direction)) return true;
     const position = model.selectionIsPlaceholder ? (direction > 0 ? end : start) : model.position;
     const here = model.at(position);
     // Into raw text left in the equation: it opens with the caret at that side.
@@ -1691,6 +1701,7 @@
   function moveToSlot(direction) {
     const model = fieldModel();
     if (!model) return false;
+    if (direction > 0 && crossTextEdge(model, direction)) return true;
     const atom = caretAtom(model);
     if (moveToCell(model, atom, direction)) return true;
     const owner = atom?.parent;
@@ -1732,6 +1743,23 @@
       const outer = operator ?? owner;
       mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(outer.leftSibling);
     }
+    return true;
+  }
+
+  /**
+   * \text{…} is no structure in MathLive, only text-mode atoms in their slot, so the end of the text
+   * and the slot's end after it are one position, told apart by MathLive's mode. As with any other
+   * element, → (and Tab) at the end of text first leave the text: the caret stays, in math mode, so
+   * that H_{\text{abc}|} is reached before H_{\text{abc}}|; ← there goes back into the text.
+   */
+  function crossTextEdge(model, direction) {
+    if (!model.selectionIsCollapsed) return false;
+    const before = model.at(model.position);
+    if (before?.mode !== 'text') return false;
+    if (direction > 0 && mathfield.mode === 'text' && before.rightSibling?.mode !== 'text') mathfield.mode = 'math';
+    else if (direction < 0 && mathfield.mode === 'math') mathfield.mode = 'text';
+    else return false;
+    markTextMode(mathfield);
     return true;
   }
 
@@ -2899,6 +2927,8 @@
   function settleAfterRaw() {
     if (composing || !mathfield || !fieldModel()?.selectionIsCollapsed) return;
     resetTypingStyle(mathfield);
+    // After converted \text{…} the caret is past the text, as after any other element.
+    if (mathfield.mode === 'text') { mathfield.mode = 'math'; markTextMode(mathfield); }
   }
 
   /** Keys while composing. Returns true if the key was used. */
