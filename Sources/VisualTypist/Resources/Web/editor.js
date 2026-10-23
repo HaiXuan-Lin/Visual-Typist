@@ -1703,7 +1703,12 @@
     return true;
   }
 
-  /** Tab / Shift-Tab: the next or previous slot of the current structure, then out of it. */
+  /**
+   * Tab / Shift-Tab: the next or previous slot of the current structure, then out of it. Scripts go
+   * superscript, subscript, then out, as in AxMath (⌘J starts in the superscript); Shift-Tab in the
+   * superscript stays there, rather than leave between the base and its scripts. → and ← enter
+   * scripts as slotOrder says.
+   */
   function moveToSlot(direction) {
     const model = fieldModel();
     if (!model) return false;
@@ -1735,7 +1740,7 @@
       }
       return true;
     }
-    const order = slotOrder(owner);
+    const order = isScripts(owner) ? slotOrder(owner).reverse() : slotOrder(owner);
     const target = order[order.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
     const operand = operandOf(owner)?.type === 'group' ? operandOf(owner) : null;
     const operator = operatorOf(owner);
@@ -1745,6 +1750,8 @@
       moveCaretTo(model.offsetOf(branchAtoms(operand, 'body').at(-1))); // Limits → operand.
     } else if (direction < 0 && operator) {
       moveCaretTo(model.offsetOf(branchAtoms(operator, slotOrder(operator).at(-1)).at(-1))); // Operand → upper limit.
+    } else if (direction < 0 && isScripts(owner)) {
+      return true;
     } else {
       const outer = operator ?? owner;
       mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(outer.leftSibling);
