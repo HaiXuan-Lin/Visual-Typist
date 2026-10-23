@@ -175,7 +175,7 @@
   }
 
   // Commands that act on a ⌘A selection themselves; any other command ends it first.
-  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'alignEquals', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
+  const SELECTION_COMMANDS = new Set(['selectAll', 'undo', 'redo', 'toggleTheme', 'alignEquals', 'deleteToLineStart', 'fontBold', 'fontItalic', 'fontRoman', 'fontNormal',
     'fontBoldSymbol', 'fontSans', 'fontMono', 'fontCalligraphic', 'fontScript', 'fontFraktur', 'fontBlackboard']);
 
   // While raw text is typed in the equation, the moving shortcuts (⌥A, ⌥D…) move through it.
@@ -190,6 +190,11 @@
       // a move goes through it, anything else leaves it in the equation first.
       const key = RAW_MOVES[binding.command];
       if (key) return handleCompositionKey({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false });
+      if (binding.command === 'deleteToLineStart') {
+        inputKind = 'other';
+        history.lastKind = null;
+        return deleteRawToLineStart();
+      }
       parkComposition();
     }
     // A shortcut is its own undo step (the native side runs it without a keydown here).
@@ -493,7 +498,8 @@
     removeRow: () => matrixCommand('removeRow'),
     removeColumn: () => matrixCommand('removeColumn'),
     selectAll: () => selectAll(),
-    deleteLine: () => deleteLine(),
+    deleteToLineStart: () => deleteToLineStart(),
+    deleteLine: () => deleteToLineStart(), // Its name in shortcuts saved by earlier versions.
     cursorUp: () => moveCaret('up'),
     cursorDown: () => moveCaret('down'),
     cursorLeft: () => moveCaret('left'),
@@ -519,7 +525,7 @@
     addRowBefore: 'Matrix: insert row above', addRowAfter: 'Matrix: insert row below',
     addColumnBefore: 'Matrix: insert column before', addColumnAfter: 'Matrix: insert column after',
     removeRow: 'Matrix: delete row', removeColumn: 'Matrix: delete column', undo: 'Undo', redo: 'Redo',
-    selectAll: 'Select all', deleteLine: 'Delete the line',
+    selectAll: 'Select all', deleteToLineStart: 'Delete to the start of the line', deleteLine: 'Delete to the start of the line',
     cursorUp: 'Move up', cursorDown: 'Move down', cursorLeft: 'Move left', cursorRight: 'Move right',
     lineStart: 'Move to start of line', lineEnd: 'Move to end of line', toggleTheme: 'Light / dark theme',
     alignEquals: 'Align lines at =',
@@ -737,28 +743,59 @@
     if (span) replaceSpan('');
   }
 
-  /** ⌘⌫: empties the line; an empty line is removed. */
-  function deleteLine() {
+  /**
+   * ⌘⌫: deletes from the caret back to the start of the line, as in text editors (aaaa|bbb → |bbb).
+   * Inside a structure it deletes back to the start of the caret's slot, not cutting the structure
+   * in half. With a selection, or nothing before the caret, it is a Backspace: at the start of a
+   * line it joins the line above.
+   */
+  function deleteToLineStart() {
     if (codeFocused()) {
-      const { value, selectionStart } = codeArea;
+      const { value, selectionStart, selectionEnd } = codeArea;
       const start = value.lastIndexOf('\n', selectionStart - 1) + 1;
-      if (start === selectionStart && start > 0) codeArea.setRangeText('', start - 1, start, 'end'); // Join with the line above.
+      if (selectionStart !== selectionEnd) codeArea.setRangeText('', selectionStart, selectionEnd, 'end');
+      else if (start === selectionStart && start > 0) codeArea.setRangeText('', start - 1, start, 'end'); // Join with the line above.
       else codeArea.setRangeText('', start, selectionStart, 'end');
       codeArea.dispatchEvent(new Event('input'));
       return true;
     }
     if (!mathfield) return false;
-    const index = lines.indexOf(mathfield);
-    if (mathfield.lastOffset > 0) {
-      setLineValue(index, '').then(field => { field.focus(); syncFromField(); });
-    } else if (lines.length > 1) {
-      const target = lines[index - 1] ?? lines[index + 1];
-      removeLine(mathfield, target);
-      target.focus();
-      mathfield = target;
-      target.position = index > 0 ? target.lastOffset : 0;
+    if (allSelected) { replaceSpan(''); return true; }
+    mathfield.focus();
+    if (!fieldModel()) return false;
+    if (!deleteToSlotStart() && !handleEditingKey({ key: 'Backspace', shiftKey: false }, 'backspace')) mathfield.executeCommand('deleteBackward');
+    return true;
+  }
+
+  /** Deletes from the start of the caret's slot (or \middle segment) to the caret; false if nothing is there. */
+  function deleteToSlotStart() {
+    const model = fieldModel();
+    const here = model?.selectionIsCollapsed ? model.at(model.position) : null;
+    if (!here || here.type === 'first' || isMiddle(here)) return false;
+    const start = hasMiddle(here.parent) ? segmentAt(here).boundary : branchAtoms(here.parent, here.parentBranch)[0];
+    mathfield.selection = { ranges: [[model.offsetOf(start), model.position]] };
+    if (!here.parent.isRoot && (!here.rightSibling || isMiddle(here.rightSibling))) {
+      // A slot left empty keeps its place, as after Backspace; MathLive would drop an empty script.
+      mathfield.insert('\\placeholder{}', { format: 'latex', insertionMode: 'replaceSelection', feedback: false });
+      selectPlaceholderAt(model.offsetOf(start) + 1);
       syncFromField();
+    } else {
+      mathfield.executeCommand('deleteBackward');
     }
+    return true;
+  }
+
+  /** ⌘⌫ in raw text: the raw text before its caret goes, and what is before it in the line. */
+  function deleteRawToLineStart() {
+    const { raw, caret, quiet } = composing;
+    closeComposition();
+    deleteToSlotStart();
+    const rest = raw.slice(caret);
+    if (rest) {
+      composing = { mode: 'math', raw: rest, caret: 0, quiet, text: '', page: 0, list: [], start: null };
+      refreshComposition();
+    }
+    syncFromField();
     return true;
   }
 

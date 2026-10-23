@@ -45,7 +45,7 @@ window.VT_DEFAULT_KEYMAP = {
 
   // Selection and lines
   'cmd+a': { command: 'selectAll' },
-  'cmd+backspace': { command: 'deleteLine' },
+  'cmd+backspace': { command: 'deleteToLineStart' },
 
   // Caret movement
   'alt+w': { command: 'cursorUp' },
