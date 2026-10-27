@@ -52,6 +52,10 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         let theme = Theme.chosen.map { "\"\($0)\"" } ?? "null"
         contentController.addUserScript(WKUserScript(
             source: "window.VT_THEME = \(theme);", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        // And the command candidates chosen before, which come first again.
+        contentController.addUserScript(WKUserScript(
+            source: "window.VT_CANDIDATE_MEMORY = \(CandidateMemory.json);",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController = contentController
         webView = EditorWebView(frame: .zero, configuration: configuration)
         self.shortcuts = shortcuts
@@ -74,6 +78,12 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             MainActor.assumeIsolated {
                 guard let self, let mode = Theme.chosen else { return }
                 self.evaluate("window.vt.setTheme(mode)", ["mode": mode])
+            }
+        }
+        // A candidate chosen in one window comes first in the others too.
+        NotificationCenter.default.addObserver(forName: CandidateMemory.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.evaluate("window.vt?.setCandidateMemory(memory)", ["memory": CandidateMemory.json])
             }
         }
         // Keep every open window's shortcuts in sync with edits made in any of them.
@@ -115,6 +125,8 @@ final class EditorBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             if let mode = body["mode"] as? String { Theme.choose(mode) }
         case "saveShortcuts":
             shortcuts.save(overrides: body["overrides"] as? [String: Any] ?? [:])
+        case "candidateMemory":
+            if let memory = body["memory"] as? String { CandidateMemory.save(memory) }
         case "action":
             if let name = body["name"] as? String { onAction?(name, body) }
         case "error":
@@ -332,6 +344,31 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     init(_ target: EditorBridge) { self.target = target }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         target?.userContentController(controller, didReceive: message)
+    }
+}
+
+/// The command candidates chosen in the equation for each run of letters typed after \, which the
+/// page offers first next time, as an input method does. Kept in the user defaults as the page's JSON,
+/// whose key order (the queries used longest ago first) a dictionary would lose.
+@MainActor
+enum CandidateMemory {
+    static let didChange = Notification.Name("VisualTypistCandidateMemoryDidChange")
+    private static let key = "candidateMemory"
+
+    /// A JSON object, also a JavaScript literal; "{}" until something was chosen.
+    static var json: String {
+        guard let json = UserDefaults.standard.string(forKey: key), isObject(json) else { return "{}" }
+        return json
+    }
+
+    static func save(_ json: String) {
+        guard isObject(json), json != UserDefaults.standard.string(forKey: key) else { return }
+        UserDefaults.standard.set(json, forKey: key)
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+
+    private static func isObject(_ json: String) -> Bool {
+        (try? JSONSerialization.jsonObject(with: Data(json.utf8))) is [String: Any]
     }
 }
 
