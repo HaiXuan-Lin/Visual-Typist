@@ -16,7 +16,9 @@
   // `alignment` is how the lines stand: 'left', or 'equals' (at their first relation, as AxMath's
   // Align At Equal Symbols; see alignLines).
   const state = { latex: '', fontSize: 32, color: DEFAULT_INK, displayStyle: true, alignment: 'left' };
-  const ui = { mode: 'symbols' };
+  // `zoom` magnifies the canvas (pinch; see setZoom), on top of EDIT_SCALE.
+  const ui = { mode: 'symbols', zoom: 1 };
+  const ZOOM_RANGE = [0.5, 4];
   const paletteById = new Map(VT_PALETTE.flatMap(category => category.items.map(item => [item.id, item])));
 
   let lines = [];        // One editor field per line of the document.
@@ -641,6 +643,41 @@
     return { line: lines.indexOf(field), offset: topLevelOffset(field, toEnd ? end : start, toEnd) };
   }
 
+  /**
+   * Keeps the caret of the line being edited in view by scrolling the canvas, which holds the lines
+   * at their full width (see #field-host); MathLive would scroll the whole line into view instead.
+   * Run once the line is drawn: MathLive draws on the next frame, and this frame callback comes after.
+   * Not while a button is held: what is clicked or dragged over is in view (and during a drag MathLive
+   * may report a passing selection that ends at the start of the line).
+   */
+  let revealFrame = 0;
+  let pointerHeld = false;
+  function revealCaret() {
+    revealFrame ||= requestAnimationFrame(() => {
+      revealFrame = 0;
+      const model = fieldModel();
+      if (!model || !mathfield.hasFocus() || pointerHeld) return;
+      const atom = model.at(model.position);
+      const element = mathfield.shadowRoot.querySelector('.ML__caret') ?? (atom && mathfield._mathfield.getHTMLElement?.(atom));
+      if (!element) return;
+      const box = element.getBoundingClientRect();
+      const x = element.classList.contains('ML__caret') || atom.type !== 'first' ? box.right : box.left;
+      const view = canvas.getBoundingClientRect();
+      const line = mathfield.getBoundingClientRect();
+      // The whole line vertically if it fits, else the caret.
+      const [top, bottom] = line.height <= canvas.clientHeight ? [line.top, line.bottom] : [box.top, box.bottom];
+      const margin = 24;
+      const left = view.left + margin;
+      const right = view.left + canvas.clientWidth - margin;
+      const dx = x < left ? x - left : x > right ? x - right : 0;
+      const dy = top < view.top ? top - view.top : bottom > view.top + canvas.clientHeight ? bottom - view.top - canvas.clientHeight : 0;
+      if (!dx && !dy) return;
+      // Near the start of the lines, all the way back.
+      const scrollLeft = dx < 0 && canvas.scrollLeft + dx < 2 * margin ? 0 : canvas.scrollLeft + dx;
+      canvas.scrollTo({ left: scrollLeft, top: canvas.scrollTop + dy, behavior: 'instant' });
+    });
+  }
+
   /** The caret's horizontal position in a line, for moving to the line above or below. */
   function caretX(field, offset) {
     const model = fieldModel(field);
@@ -894,9 +931,11 @@
     /* A filled slot is still inside its structure. Keep its caret at the body's height,
        below an overline, instead of extending it through the decoration like an outer caret. */
     .vt-inside-structure .ML__caret::after { height: .58em; bottom: -.02em; left: -.08em; transform: none; }
-    /* Leaving a structure (e.g. an overline) moves the caret visibly to its right and
-       lengthens it further. Scaling changes only the drawing, not the equation's layout. */
-    .vt-after-structure .ML__caret::after { left: .12em; transform: scaleY(1.5); }
+    /* Right after a structure the caret stands at its edge: moved right, it would cover what follows
+       (∫, a closing bracket or ⟩). Outside every structure it is already taller than in a slot; inside
+       another structure it is a little taller than at the end of a slot at the same place
+       (\left(\overline{x}|\right) against \left(\overline{x|}\right)). Scaling changes only the drawing. */
+    .vt-inside-structure.vt-after-structure .ML__caret::after { left: -.045em; transform: scaleY(1.3); }
     .vt-slot-selected .ML__caret::after { display: none; }
     .vt-match { background: var(--bracket-match); border-radius: 2px; }
     /* A selection with scripts is drawn by us (see drawScriptSelection), MathLive's being too large. */
@@ -1009,6 +1048,7 @@
         // the drag in (above the line, its hit test can fall back on the anchor and collapse it):
         // the spanning selection is shown again once MathLive is done.
         requestAnimationFrame(updateMatches); // Brackets beside the caret.
+        if (field === mathfield) revealCaret();
         if (allSelected) { requestAnimationFrame(() => { if (allSelected) paintSpan(); }); return; }
         if (composing?.mode === 'math' || field !== mathfield || restoringPlaceholders) return;
         if (restorePlaceholders()) syncFromField();
@@ -1029,6 +1069,7 @@
     field.keybindings = field.keybindings.filter(binding => !['/', '[NumpadDivide]'].includes(binding.key));
     field.letterShapeStyle = 'tex';
     if (!scratch) {
+      field.onScrollIntoView = () => { if (field === mathfield) revealCaret(); };
       const style = document.createElement('style');
       style.textContent = FIELD_CSS;
       field.shadowRoot.append(style);
@@ -1188,10 +1229,103 @@
   }
 
   /**
+   * A fraction is as tall as its numerator and as deep as its denominator, so each character typed in
+   * one that is taller or deeper than the one before (a, then b, g, a bracket, raw text's \) moved the
+   * whole line up and down. As in classic editors, the numerator and denominator are laid out at least
+   * as tall and deep as a bracket (FRACTION_ROW, in em): ordinary characters move nothing.
+   */
+  const FRACTION_ROW = { height: 0.75, depth: 0.25 };
+  function steadyFractions() {
+    scratchField.setValue('\\frac{x}{y}', { silenceNotifications: true });
+    const Genfrac = fieldModel(scratchField)?.root.body.find(atom => atom.type === 'genfrac')?.constructor;
+    const Atom = Genfrac && Object.getPrototypeOf(Genfrac);
+    if (typeof Atom?.createBox !== 'function') return;
+    // The fraction being laid out makes its numerator, then its denominator (then maybe scripts).
+    let rows = 0;
+    const createBox = Atom.createBox;
+    Atom.createBox = function (...args) {
+      const row = rows > 0;
+      const pending = rows;
+      rows = 0; // Not what the row holds.
+      try {
+        const box = createBox.apply(this, args);
+        if (row && box) {
+          const scale = box.scale || 1;
+          box.height = Math.max(box.height / scale, FRACTION_ROW.height);
+          box.depth = Math.max(box.depth / scale, FRACTION_ROW.depth);
+        }
+        return box;
+      } finally {
+        rows = row ? pending - 1 : pending;
+      }
+    };
+    const render = Genfrac.prototype.render;
+    Genfrac.prototype.render = function (context) {
+      const outer = rows;
+      rows = 2;
+      try {
+        return render.call(this, context);
+      } finally {
+        rows = outer;
+      }
+    };
+  }
+
+  /**
+   * MathLive draws \cancel, \bcancel and \xcancel short and low: their line is drawn in a box padded
+   * by \fboxsep that ends up below the cancelled content instead of around it. They are drawn as
+   * MathJax draws them (and so the exports): corner to corner of the content padded by CANCEL_PAD on
+   * each side, the padding taking room as there.
+   */
+  const CANCEL_PAD = 0.2; // em
+  function drawCancels() {
+    scratchField.setValue('\\cancel{x}', { silenceNotifications: true });
+    const Enclose = fieldModel(scratchField)?.root.body.find(atom => atom.type === 'enclose')?.constructor;
+    if (!Enclose) return;
+    const render = Enclose.prototype.render;
+    const number = value => String(Math.round(value * 1000) / 1000); // In em (MathLive's line() takes a number as %).
+    Enclose.prototype.render = function (context) {
+      const box = render.call(this, context);
+      const notations = Object.keys(this.notation ?? {}).filter(key => this.notation[key]);
+      const [overlay, body] = box?.children ?? [];
+      if (!notations.length || !notations.every(key => /^(up|down)diagonalstrike$/.test(key)) || !overlay?.svgOverlay || !body) return box;
+      const { width, height, depth } = body;
+      const [w, h] = [width + 2 * CANCEL_PAD, height + depth + 2 * CANCEL_PAD];
+      // The overlay spans the padded content. It is placed from a strip on the baseline as wide as the
+      // content and taking no room: where the content's box starts above the baseline is up to the
+      // browser, and MathLive's widths can be too large (a fraction's is).
+      overlay.width = w;
+      overlay.height = height + CANCEL_PAD;
+      overlay.depth = depth + CANCEL_PAD;
+      for (const [property, value] of [['left', `${-CANCEL_PAD}em`], ['top', `${number(-height - CANCEL_PAD)}em`],
+        ['width', `calc(100% + ${2 * CANCEL_PAD}em)`], ['height', `${number(h)}em`]]) overlay.setStyle(property, value);
+      overlay.svgOverlay = (this.notation.updiagonalstrike ? this.line('0', number(h), number(w), '0') : '') +
+        (this.notation.downdiagonalstrike ? this.line('0', '0', number(w), number(h)) : '');
+      overlay.svgStyle = `${overlay.svgStyle ?? ''} preserveAspectRatio="none"`;
+      const baseline = new overlay.constructor([overlay], { type: 'ignore' });
+      for (const [property, value] of [['display', 'inline-block'], ['position', 'relative'], ['width', '100%'],
+        ['margin-right', '-100%'], ['height', '0'], ['vertical-align', 'baseline']]) baseline.setStyle(property, value);
+      baseline.parent = box;
+      box.children[0] = baseline;
+      delete body.cssProperties?.width;
+      delete box.cssProperties?.height;
+      box.width = width;
+      box.hasExplicitWidth = false; // The content's own width.
+      box.height = height + CANCEL_PAD;
+      box.depth = depth + CANCEL_PAD;
+      box.left = CANCEL_PAD;
+      box.right = CANCEL_PAD;
+      return box;
+    };
+  }
+
+  /**
    * MathLive lays out an empty slot with the fallback metrics of its ▢ glyph: 0.8em wide and 0.2em
    * below the baseline, which makes empty structures wider and taller than filled ones (the
    * expression jumps when the first character goes in). Slots get the size of a classic editor's:
-   * a narrow block on the baseline, as tall as a letter with an ascender.
+   * a narrow block on the baseline, as tall as a letter with an ascender. The block is drawn so from
+   * the start (.vt-slot): MathLive measures its selection as soon as it renders, and with the glyph's
+   * own width a selection after an empty slot was drawn beside what it selected.
    */
   function sizeSlots(Placeholder) {
     const render = Placeholder.prototype.render;
@@ -1200,6 +1334,7 @@
       box.height = SLOT.height;
       box.depth = 0;
       box.width = SLOT.width;
+      box.classes = `${box.classes ?? ''} vt-slot`;
       return box;
     };
   }
@@ -1267,6 +1402,7 @@
       placeholder.parent.removeChild(placeholder);
       if (placeholder === selected) select = inner;
     }
+    scratchField.position = 0; // Its group was taken: a caret past its end would fail to draw.
     restoringPlaceholders = true;
     try {
       model.contentDidChange({ inputType: 'insertText' });
@@ -1525,6 +1661,11 @@
   const isStructure = atom => !!atom && atom.type !== 'first' && (atom.branches?.length ?? 0) > 0;
   /** Scripts that MathLive keeps as their own atom after the base (x then ^{2}). */
   const isScripts = atom => atom?.type === 'subsup';
+  /**
+   * Structures that ← and → leave from either slot, as in AxMath: scripts and fractions, whose slots
+   * are above one another (↑ and ↓ go between them; Tab still walks them).
+   */
+  const leftSideways = atom => isScripts(atom) || atom?.type === 'genfrac';
 
   /** Deletes the structure `atom` (scripts only: the base stays), leaving the caret where it was. */
   function deleteStructure(model, atom) {
@@ -1708,14 +1849,17 @@
       if (next) {
         if (next.type === 'placeholder') selectPlaceholderAt(model.offsetOf(next));
         else if (isStructure(next)) enterSlot(next, slotOrder(next)[0], false);
+        // An operator without limits (\int{…}) and its operand are one unit: → enters the operand.
+        else if (operandOf(next)?.type === 'group') enterSlot(operandOf(next), 'body', false);
+        else if (operandOf(next)) selectPlaceholderAt(model.offsetOf(operandOf(next)));
         else mathfield.position = model.offsetOf(next);
         return true;
       }
       const owner = here.parent;
       if (!owner || owner.isRoot) return moveToLine(lineIndex + 1, 0, 'start') || true;
       const order = slotOrder(owner);
-      // Leaving either script → (or ←) leaves the scripts, as in classic editors (↓ / ↑ go between them).
-      const following = isScripts(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
+      // Leaving either script or either part of a fraction → (or ←) leaves the structure (see leftSideways).
+      const following = leftSideways(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) + 1];
       if (following !== undefined) enterSlot(owner, following, false);
       else if (operandOf(owner)?.type === 'group') enterSlot(operandOf(owner), 'body', false); // From the limits into the operand.
       else if (operandOf(owner)) selectPlaceholderAt(model.offsetOf(operandOf(owner)));
@@ -1733,10 +1877,11 @@
     const owner = here.parent;
     if (!owner || owner.isRoot) return moveToLine(lineIndex - 1, 0, 'end') || true;
     const order = slotOrder(owner);
-    const preceding = isScripts(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
+    const preceding = leftSideways(owner) ? undefined : order[order.findIndex(branch => sameBranch(branch, here.parentBranch)) - 1];
+    const operator = operatorOf(owner);
     if (preceding !== undefined) enterSlot(owner, preceding, true);
-    else if (operatorOf(owner)) enterSlot(operatorOf(owner), slotOrder(operatorOf(owner)).at(-1), true); // Operand → upper limit.
-    else mathfield.position = model.offsetOf(owner.leftSibling);
+    else if (isStructure(operator)) enterSlot(operator, slotOrder(operator).at(-1), true); // Operand → upper limit.
+    else mathfield.position = model.offsetOf((operator ?? owner).leftSibling); // Out, before an operator without limits too.
     return true;
   }
 
@@ -1785,7 +1930,7 @@
       moveCaretTo(model.offsetOf(branchAtoms(owner, target).at(-1)));
     } else if (direction > 0 && operand) {
       moveCaretTo(model.offsetOf(branchAtoms(operand, 'body').at(-1))); // Limits → operand.
-    } else if (direction < 0 && operator) {
+    } else if (direction < 0 && isStructure(operator)) {
       moveCaretTo(model.offsetOf(branchAtoms(operator, slotOrder(operator).at(-1)).at(-1))); // Operand → upper limit.
     } else if (direction < 0 && isScripts(owner)) {
       return true;
@@ -2350,10 +2495,35 @@
   }
 
   function styleField(field) {
-    field.style.fontSize = `${Math.round(state.fontSize * EDIT_SCALE)}px`;
+    field.style.fontSize = `${Math.round(state.fontSize * EDIT_SCALE * ui.zoom)}px`;
     // The default ink follows the theme on screen; any other color is shown as chosen.
     field.style.color = state.color.toUpperCase() === DEFAULT_INK ? '' : state.color;
     field.defaultMode = state.displayStyle ? 'math' : 'inline-math';
+  }
+
+  /**
+   * Magnifies the canvas (pinch, as in AxMath); the document, its exports and the rest of the window
+   * keep their size. The point of the canvas at `anchor` (client coordinates) stays where it is.
+   */
+  function setZoom(value, anchor = null) {
+    const zoom = Math.min(ZOOM_RANGE[1], Math.max(ZOOM_RANGE[0], value));
+    const size = scale => Math.round(state.fontSize * EDIT_SCALE * scale); // As styleField sets it.
+    const ratio = size(zoom) / size(ui.zoom);
+    ui.zoom = zoom; // Small steps add up until the size changes.
+    try { localStorage.setItem('vt.zoom', String(zoom)); } catch (_) { /* Optional. */ }
+    toast(`${Math.round(zoom * 100)}%`);
+    if (ratio === 1 || !lines.length) return;
+    // The anchor keeps its place relative to the line beside it, which scales with the font.
+    const view = canvas.getBoundingClientRect();
+    const point = anchor ?? { x: view.left, y: view.top };
+    const content = lineAt(point.y).shadowRoot?.querySelector('.ML__content');
+    const before = content?.getBoundingClientRect();
+    lines.forEach(styleField);
+    scheduleAlignment();
+    if (!before) return;
+    const after = content.getBoundingClientRect();
+    canvas.scrollBy({ left: after.left + (point.x - before.left) * ratio - point.x,
+      top: after.top + (point.y - before.top) * ratio - point.y, behavior: 'instant' });
   }
 
   function applyPresentation() {
@@ -2605,11 +2775,46 @@
   //
   // Typing \name shows candidates the way an input method does: Space takes the first, 1–8 take
   // one by number, Enter keeps the command as typed, Esc cancels, and , . (or ← → PgUp PgDn) page.
+  // Like an input method it remembers: what was chosen for the letters typed comes first next time.
 
   const PAGE_SIZE = 8;
   let commandIndex = null;
+  let commandsByLabel = null;
   let composing = null; // { mode: 'math' | 'code', text, page, list, start }
   const glyphCache = new Map();
+
+  // The candidates chosen for each query (the letters after \), the latest first; the queries used
+  // longest ago are forgotten first. Kept by the app (window.VT_CANDIDATE_MEMORY), or the browser.
+  const MEMORY_LIMITS = { queries: 500, choices: 5 };
+  let candidateMemory = sanitizeMemory(window.VT_CANDIDATE_MEMORY ?? (() => {
+    try { return IN_APP ? {} : JSON.parse(localStorage.getItem('vt.candidates') || '{}'); } catch (_) { return {}; }
+  })());
+
+  function sanitizeMemory(raw) {
+    const memory = Object.create(null); // Queries such as "constructor" are not Object's.
+    for (const [query, labels] of Object.entries(raw && typeof raw === 'object' ? raw : {})) {
+      if (/^[a-zA-Z]*$/.test(query) && Array.isArray(labels)) {
+        memory[query] = labels.filter(label => typeof label === 'string').slice(0, MEMORY_LIMITS.choices);
+      }
+    }
+    return memory;
+  }
+
+  function rememberCandidate(query, entry) {
+    const labels = [entry.label, ...(candidateMemory[query] ?? []).filter(label => label !== entry.label)];
+    delete candidateMemory[query]; // Re-added last: the most recently used query.
+    candidateMemory[query] = labels.slice(0, MEMORY_LIMITS.choices);
+    const queries = Object.keys(candidateMemory);
+    for (const old of queries.slice(0, Math.max(0, queries.length - MEMORY_LIMITS.queries))) delete candidateMemory[old];
+    post('candidateMemory', { memory: JSON.stringify(candidateMemory) }); // As text, which keeps the order.
+  }
+
+  /** The candidates chosen before for `query` first, the latest first, then `list` without them. */
+  function withRemembered(query, list) {
+    commandsByLabel ??= new Map(commandIndex.map(entry => [entry.label, entry]));
+    const remembered = (candidateMemory[query] ?? []).map(label => commandsByLabel.get(label)).filter(Boolean);
+    return remembered.length ? [...remembered, ...list.filter(entry => !remembered.includes(entry))] : list;
+  }
 
   // Large operators are offered as AxMath offers them (its candidate data, Dat/AxTCMData.dat), each
   // with its operand: \int{▢}, \int_{▢}{▢} and \int_{▢}^{▢}{▢}, listed as \int, \int_{} and \int_{}^{};
@@ -2679,9 +2884,16 @@
     return at === query.length;
   }
 
-  /** Candidates for `query` (the letters after \): exact, prefix, contains, subsequence, then first letter. */
+  /**
+   * Candidates for `query` (the letters after \): those chosen for it before, then exact, prefix,
+   * contains, subsequence, then first letter.
+   */
   function candidatesFor(query) {
     commandIndex ??= buildCommandIndex();
+    return withRemembered(query, rankedCandidates(query));
+  }
+
+  function rankedCandidates(query) {
     if (!query) return commandIndex.filter(entry => entry.rank < 0).sort((a, b) => a.rank - b.rank);
     const lower = query.toLowerCase();
     const tier = entry => {
@@ -2755,7 +2967,7 @@
       glyphBox.className = 'cand-glyph';
       glyphBox.append(candidateGlyph(entry));
       button.append(label, glyphBox);
-      button.addEventListener('mousedown', event => { event.preventDefault(); chooseCandidate(entry); });
+      button.addEventListener('mousedown', event => { event.preventDefault(); chooseCandidate(entry, { remember: true }); });
       return button;
     }));
     if (pages > 1) {
@@ -2765,22 +2977,34 @@
       list.append(more);
     }
     panel.hidden = false;
+    preedit.hidden = true;
+    if (composing.mode === 'math') {
+      updateInlinePreedit();
+      // Placed again once MathLive has drawn the raw text (on the next frame, before this callback):
+      // measured now, the bar would stand against the line as it was before the key.
+      candidatesFrame ||= requestAnimationFrame(() => {
+        candidatesFrame = 0;
+        if (composing?.mode === 'math' && !panel.hidden) placeCandidates();
+      });
+    }
+    placeCandidates();
+  }
 
-    // Position: the typed command sits at the caret; the bar goes below the line.
+  /** Puts the candidate bar below the line, under the command the candidates are for. */
+  let candidatesFrame = 0;
+  function placeCandidates() {
+    const list = $('candidates').querySelector('.cand-list');
     let caretX;
     let lineBottom;
     if (composing.mode === 'math') {
-      updateInlinePreedit();
       const model = fieldModel();
       // Under the command the candidates are for: one atom per raw character.
       const point = model && caretPoint(model, (composing.start ?? model.position) + (commandBeforeCaret()?.at ?? 0));
       const fieldBox = mathfield.getBoundingClientRect();
       caretX = point?.x ?? fieldBox.left;
-      preedit.hidden = true;
       lineBottom = fieldBox.bottom;
     } else {
       const point = textareaCaretPoint(codeArea, composing.start);
-      preedit.hidden = true;
       caretX = point.x;
       lineBottom = point.top + point.height + 2;
     }
@@ -2950,7 +3174,8 @@
     const name = /^\\([a-zA-Z]*)$/.exec(raw)?.[1];
     if (name !== undefined) {
       if (!name) { closeComposition(); return; }
-      const exact = candidatesFor(name).find(entry => entry.name === name);
+      commandIndex ??= buildCommandIndex();
+      const exact = rankedCandidates(name).find(entry => entry.name === name); // As typed, whatever was chosen before.
       if (exact) { chooseCandidate(exact); return; }
       closeComposition();
       mathfield?.focus();
@@ -2967,7 +3192,8 @@
     }
     // Spaces count in text (\\text{a b}); in a math font they don't, and are left out as AxMath does.
     const latex = command && !/^(text|mbox)/.test(command[1]) ? `\\${command[1]}{${command[2].replace(/\s+/g, '')}}` : raw;
-    if (latex.trim()) insertLatex(latex.replace(/#/g, '\\#'));
+    // A script with nothing after it (\\lim_, x^) gets its slot, and the caret goes there.
+    if (latex.trim()) insertLatex(latex.replace(/#/g, '\\#').replace(/(?<!\\)([_^])(?=\s*(?:$|[_^]))/g, '$1{#?}'));
   }
 
   /** Raw text as it is shown: every character literally, in upright type. */
@@ -3037,9 +3263,11 @@
     if (!keepPreedit) removeInlinePreedit(state);
   }
 
-  function chooseCandidate(entry) {
+  /** Takes a candidate; one picked from the list (`remember`) comes first for its letters next time. */
+  function chooseCandidate(entry, { remember = false } = {}) {
     const state = composing;
     if (!state || !entry) { closeComposition(); return; }
+    if (remember) rememberCandidate(state.text, entry);
     if (state.mode === 'code') {
       closeComposition();
       codeArea.focus();
@@ -3086,7 +3314,7 @@
     const { key } = event;
     if (['Shift', 'Alt', 'Meta', 'Control', 'CapsLock', 'Fn'].includes(key)) return true; // A modifier on its own.
     const page = delta => { composing.page += delta; renderCandidates(); return true; };
-    const choose = index => { chooseCandidate(composing.list[composing.page * PAGE_SIZE + index]); return true; };
+    const choose = index => { chooseCandidate(composing.list[composing.page * PAGE_SIZE + index], { remember: true }); return true; };
     if (composing.mode === 'code') {
       if (event.metaKey || event.ctrlKey || event.altKey) { closeComposition(); return false; }
       // Letters and Backspace edit the text itself; the input event refreshes the candidates.
@@ -3252,6 +3480,7 @@
     if (type === 'action') webAction(payload.name, payload);
     else if (type === 'theme') { try { localStorage.setItem('vt.theme', payload.mode); } catch (_) { /* Optional. */ } }
     else if (type === 'saveShortcuts') { try { localStorage.setItem('vt.shortcuts', JSON.stringify(payload.overrides)); } catch (_) { /* Optional. */ } }
+    else if (type === 'candidateMemory') { try { localStorage.setItem('vt.candidates', payload.memory); } catch (_) { /* Optional. */ } }
   }
 
   if (!IN_APP) {
@@ -3650,6 +3879,8 @@
     scratchField = await createField({ scratch: true });
     placeholderClass(); // Sizes the slots before the first line renders.
     centerArrays();
+    drawCancels();
+    steadyFractions();
     mathfield = await insertLine(0);
     resetHistory();
 
@@ -3960,6 +4191,33 @@
   // The native host limits input methods to Roman keyboards while the equation has focus.
   document.addEventListener('focusin', () => post('focus', { math: document.activeElement?.tagName === 'MATH-FIELD' }));
 
+  canvas.addEventListener('pointerdown', () => { pointerHeld = true; }, { capture: true });
+  for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, () => { pointerHeld = false; }, { capture: true });
+  window.addEventListener('blur', () => { pointerHeld = false; });
+
+  // A swipe over a line scrolls the canvas, not the line (MathLive would scroll a line that overflows).
+  // A pinch zooms the canvas: in WebKit (the app, Safari) it comes as gesture events, elsewhere as
+  // wheel events with Ctrl, which is also ⌃-scrolling.
+  let gestureZoom = null; // The zoom when the pinch began.
+  canvas.addEventListener('wheel', event => {
+    if (event.ctrlKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (gestureZoom !== null) return;
+      const delta = Math.max(-10, Math.min(10, event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY));
+      setZoom(ui.zoom * Math.exp(-delta * 0.01), { x: event.clientX, y: event.clientY });
+    } else if (lines.some(field => event.composedPath().includes(field))) {
+      event.stopPropagation();
+    }
+  }, { capture: true, passive: false });
+  canvas.addEventListener('gesturestart', event => { event.preventDefault(); gestureZoom = ui.zoom; });
+  canvas.addEventListener('gesturechange', event => {
+    event.preventDefault();
+    if (gestureZoom === null || !Number.isFinite(event.scale)) return;
+    setZoom(gestureZoom * event.scale, Number.isFinite(event.clientX) ? { x: event.clientX, y: event.clientY } : null);
+  });
+  canvas.addEventListener('gestureend', event => { event.preventDefault(); gestureZoom = null; });
+
   strip.addEventListener('scroll', syncTabToScroll, { passive: true });
   // A vertical scroll wheel scrolls the strip sideways.
   strip.addEventListener('wheel', event => {
@@ -4001,6 +4259,10 @@
     return clamped;
   };
   try { const saved = Number(localStorage.getItem('vt.bottomHeight')); if (saved) setBottomHeight(saved); } catch (_) { /* Optional. */ }
+  try {
+    const zoom = Number(localStorage.getItem('vt.zoom'));
+    if (zoom) ui.zoom = Math.min(ZOOM_RANGE[1], Math.max(ZOOM_RANGE[0], zoom));
+  } catch (_) { /* Optional. */ }
   $('splitter').addEventListener('pointerdown', event => {
     const splitter = event.currentTarget;
     splitter.setPointerCapture(event.pointerId);
@@ -4048,6 +4310,7 @@
     selectionLatex,
     copyLatex,
     setShortcutOverrides(raw) { overrides = sanitizeOverrides(raw); rebuildKeymap(); },
+    setCandidateMemory(json) { candidateMemory = sanitizeMemory(JSON.parse(json)); }, // Choices made in another window.
     toast,
     async exportSVG(snapshot) {
       await ready;
