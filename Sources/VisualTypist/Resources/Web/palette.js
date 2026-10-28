@@ -92,7 +92,10 @@
         ...['hat', 'check', 'tilde', 'bar', 'vec', 'dot', 'ddot', 'dddot', 'acute', 'grave', 'breve',
           'mathring', 'widehat', 'widetilde', 'overline', 'underline', 'overrightarrow', 'overleftarrow',
           'overleftrightarrow', 'underrightarrow', 'underleftarrow']
-          .map(name => [name, `\\${name}{#0}`, { accent: true }]),
+          // Over a slot a wide accent is drawn at its smallest; its tile shows it over a wider block.
+          .map(name => [name, `\\${name}{#0}`, /^wide/.test(name)
+            ? { accent: true, preview: `\\${name}{{\\color[rgb]{0.71,0.85,0.97}{\\rule[-0.05em]{0.95em}{0.68em}}}}` }
+            : { accent: true }]),
       ],
     },
     {

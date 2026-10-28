@@ -2568,12 +2568,53 @@
     return (item.preview || item.latex).replace(/#@|#[0-9?]/g, '\\placeholder{}');
   }
 
+  /**
+   * MathJax's view box, widened to what it draws: it measures some accents and stretched arrows
+   * narrower than they are (the dots of \dddot over a slot, the head of \overrightarrow{x}), which
+   * the box would cut off. In the units of the view box; null without one.
+   */
+  let measureHost = null;
+  function drawnBounds(svg) {
+    const bounds = svg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
+    if (!bounds || bounds.length !== 4 || !bounds.every(Number.isFinite)) return null;
+    if (!measureHost) {
+      measureHost = document.createElement('div');
+      measureHost.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;pointer-events:none';
+      document.body.append(measureHost);
+    }
+    const [parent, next] = [svg.parentNode, svg.nextSibling];
+    measureHost.append(svg);
+    let drawn = null;
+    try { drawn = svg.getBBox(); } catch (_) { /* Not rendered: keep MathJax's box. */ }
+    if (parent) parent.insertBefore(svg, next); else svg.remove();
+    if (!(drawn?.width > 0 && drawn.height > 0)) return bounds;
+    const [x, y, width, height] = bounds;
+    const left = Math.min(x, drawn.x);
+    const top = Math.min(y, drawn.y);
+    return [left, top, Math.max(x + width, drawn.x + drawn.width) - left, Math.max(y + height, drawn.y + drawn.height) - top];
+  }
+
+  /** Gives `svg` the view box `bounds`, keeping its scale and its baseline. */
+  function setBounds(svg, bounds) {
+    const old = svg.getAttribute('viewBox').trim().split(/\s+/).map(Number);
+    const exPerUnit = parseFloat(svg.getAttribute('width')) / old[2];
+    if (!Number.isFinite(exPerUnit) || old.every((value, index) => value === bounds[index])) return;
+    svg.setAttribute('viewBox', bounds.join(' '));
+    svg.setAttribute('width', `${bounds[2] * exPerUnit}ex`);
+    svg.setAttribute('height', `${bounds[3] * exPerUnit}ex`);
+    svg.style.verticalAlign = `${-(bounds[1] + bounds[3]) * exPerUnit}ex`;
+  }
+
   function glyph(latex) {
     try {
       resetTeXState();
       const output = MathJax.tex2svg(latex, { display: false, em: 16, ex: 7 });
       const svg = output.querySelector('svg');
-      if (svg && !output.querySelector('[data-mml-node="merror"]')) return svg;
+      if (svg && !output.querySelector('[data-mml-node="merror"]')) {
+        const bounds = drawnBounds(svg);
+        if (bounds) setBounds(svg, bounds);
+        return svg;
+      }
     } catch (_) { /* Fall back to text below. */ }
     const span = document.createElement('span');
     span.textContent = latex;
@@ -3826,7 +3867,7 @@
       if (!source || output.querySelector('[data-mml-node="merror"]')) throw new Error('The equation could not be typeset.');
       if (source.querySelector('foreignObject, image')) throw new Error('The equation contains unsupported content.');
       const svg = source.cloneNode(true);
-      const bounds = svg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
+      const bounds = drawnBounds(source);
       if (!bounds || bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[2] <= 0 || bounds[3] <= 0) {
         throw new Error('The equation has no visible content.');
       }
