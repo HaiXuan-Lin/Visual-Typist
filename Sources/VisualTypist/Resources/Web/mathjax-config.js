@@ -2,7 +2,19 @@
 // MathJax renders palette glyphs and all exports (SVG, PNG, PDF, MathML).
 // tex-svg-full bundles every package and font below, so nothing is fetched at runtime.
 window.MathJax = {
-  startup: { typeset: false },
+  startup: {
+    typeset: false,
+    // MathJax 3.2 writes \grave with U+0060, which its TeX fonts draw as the opening quote ‘ (TeX's
+    // grave accent is another glyph of the font): \grave uses the grave accent U+02CB instead.
+    ready() {
+      const { CommandMap } = MathJax._.input.tex.SymbolMap;
+      const { Configuration } = MathJax._.input.tex.Configuration;
+      new CommandMap('vt-accents', { grave: ['Accent', '02CB'] }, MathJax._.input.tex.base.BaseMethods.default);
+      Configuration.create('vt-accents', { handler: { macro: ['vt-accents'] }, priority: 1 });
+      MathJax.config.tex.packages.push('vt-accents');
+      MathJax.startup.defaultReady();
+    },
+  },
   loader: { paths: { mathjax: new URL('vendor/mathjax', document.baseURI).href } },
   tex: {
     packages: ['base', 'ams', 'newcommand', 'configmacros', 'cancel', 'color', 'bbox', 'braket',
