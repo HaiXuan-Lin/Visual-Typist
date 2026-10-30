@@ -1895,9 +1895,14 @@
     const model = fieldModel();
     if (!model) return false;
     if (direction > 0 && crossTextEdge(model, direction)) return true;
-    const atom = caretAtom(model);
+    let atom = caretAtom(model);
     if (moveToCell(model, atom, direction)) return true;
-    const owner = atom?.parent;
+    let owner = atom?.parent;
+    // A plain {} group is a slot of the row it stands in, not a structure: \lim_{{□}\to{□}}.
+    while (owner && !owner.isRoot && owner.type === 'group' && !operatorOf(owner) && owner.parent) {
+      atom = owner;
+      owner = owner.parent;
+    }
     if (!owner || owner.isRoot) {
       // MathLive's placeholder command moves DOM focus to a button when no slot remains.
       // Search this equation ourselves; Tab stays here when there is no next/previous slot.
@@ -1922,6 +1927,18 @@
       }
       return true;
     }
+    // The next empty slot in the caret's own branch comes before the next branch: \lim_{□\to□}.
+    const range = model.selection.ranges[0];
+    const inRow = candidate => {
+      let child = candidate;
+      while (child && child.parent !== owner) child = child.parent;
+      return !!child && sameBranch(child.parentBranch, atom.parentBranch);
+    };
+    for (let offset = direction > 0 ? Math.max(...range) + 1 : Math.min(...range);
+      offset >= 0 && offset <= model.lastOffset; offset += direction) {
+      const candidate = model.at(offset);
+      if (candidate?.type === 'placeholder' && inRow(candidate)) { selectPlaceholderAt(offset); return true; }
+    }
     const order = isScripts(owner) ? slotOrder(owner).reverse() : slotOrder(owner);
     const target = order[order.findIndex(branch => sameBranch(branch, atom.parentBranch)) + direction];
     const operand = operandOf(owner)?.type === 'group' ? operandOf(owner) : null;
@@ -1934,6 +1951,8 @@
       moveCaretTo(model.offsetOf(branchAtoms(operator, slotOrder(operator).at(-1)).at(-1))); // Operand → upper limit.
     } else if (direction < 0 && isScripts(owner)) {
       return true;
+    } else if (direction > 0 && owner.rightSibling?.type === 'group') {
+      moveCaretTo(model.offsetOf(branchAtoms(owner.rightSibling, 'body').at(-1))); // Into the {} after it: \lim_{x\to0}{□}.
     } else {
       const outer = operator ?? owner;
       mathfield.position = direction > 0 ? model.offsetOf(owner) : model.offsetOf(outer.leftSibling);
@@ -4137,6 +4156,69 @@
   function endDrag() { drag = null; }
 
   /** The top-level offset in `field` nearest to x (MathLive's own hit test needs the line focused). */
+  /**
+   * Where a click or drag at (x, y) puts the caret in a line: of the positions the caret can take,
+   * the one drawn nearest the point, a position being a vertical stroke as tall as its row.
+   * MathLive takes the element nearest the point and one side of it instead, so some positions
+   * could not be clicked at all: between \right) and \left\langle, or after \middle| (the element
+   * nearest there is in a bracket). Used by MathLive itself (see scripts/patches/mathlive-clicks.py).
+   */
+  function caretOffsetAt(mf, x, y) {
+    const model = mf?.model;
+    const content = mf?.field; // MathLive's content element, holding the rendered atoms.
+    if (!model || !content) return -1;
+    const join = (a, b) => (!a ? b : !b ? a
+      : { left: Math.min(a.left, b.left), right: Math.max(a.right, b.right), top: Math.min(a.top, b.top), bottom: Math.max(a.bottom, b.bottom) });
+    const drawn = new Map();
+    for (const element of content.querySelectorAll('[data-atom-id]')) {
+      const box = element.getBoundingClientRect();
+      if (box.width || box.height) drawn.set(element.dataset.atomId, join(drawn.get(element.dataset.atomId), box));
+    }
+    const extents = new Map(); // An atom with what it holds (scripts, branches).
+    const extent = atom => {
+      if (!extents.has(atom)) {
+        extents.set(atom, null);
+        let box = drawn.get(atom.id) ?? null;
+        for (const branch of atom.branches ?? []) for (const child of branchAtoms(atom, branch)) box = join(box, extent(child));
+        extents.set(atom, box);
+      }
+      return extents.get(atom);
+    };
+    const rows = new Map();
+    const rowBox = atom => {
+      const key = atom.parent;
+      if (!rows.has(key)) rows.set(key, new Map());
+      const byBranch = rows.get(key);
+      const name = String(atom.parentBranch);
+      if (!byBranch.has(name)) {
+        let box = null;
+        for (const sibling of branchAtoms(atom.parent, atom.parentBranch)) box = join(box, extent(sibling));
+        byBranch.set(name, box ?? (atom.parent?.isRoot ? content.getBoundingClientRect() : extent(atom.parent)));
+      }
+      return byBranch.get(name);
+    };
+    const captured = atom => { for (let up = atom.parent; up && !up.isRoot; up = up.parent) if (up.captureSelection) return true; return false; };
+    let best = -1;
+    let bestScore = Infinity;
+    for (let offset = 0; offset <= model.lastOffset; offset += 1) {
+      const atom = model.at(offset);
+      if (!atom || captured(atom)) continue;
+      const row = rowBox(atom);
+      // An element drawn without its own id (\middle|, drawn with its bracket) ends where the next begins.
+      const after = atom => (atom.rightSibling ? extent(atom.rightSibling)?.left : row?.right);
+      const at = atom.type === 'first' ? (atom.rightSibling ? extent(atom.rightSibling)?.left : row?.left)
+        : extent(atom)?.right ?? after(atom);
+      if (!row || !Number.isFinite(at)) continue;
+      const dy = y < row.top ? row.top - y : y > row.bottom ? y - row.bottom : 0;
+      let depth = 0;
+      for (let up = atom.parent; up && !up.isRoot; up = up.parent) depth += 1;
+      const score = Math.abs(x - at) + dy - depth * 0.01; // Equally near: the inner position.
+      if (score < bestScore) { bestScore = score; best = offset; }
+    }
+    return best;
+  }
+  window.vtOffsetFromPoint = caretOffsetAt;
+
   function offsetAtX(field, x) {
     const model = fieldModel(field);
     if (!model) return 0;
