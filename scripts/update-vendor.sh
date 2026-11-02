@@ -21,6 +21,7 @@ python3 "$ROOT/scripts/patches/mathlive-scripts.py" "$WEB/mathlive/mathlive.min.
 python3 "$ROOT/scripts/patches/mathlive-accents.py" "$WEB/mathlive/mathlive.min.js"
 python3 "$ROOT/scripts/patches/mathlive-arrows.py" "$WEB/mathlive/mathlive.min.js"
 python3 "$ROOT/scripts/patches/mathlive-clicks.py" "$WEB/mathlive/mathlive.min.js"
+python3 "$ROOT/scripts/patches/mathlive-delims.py" "$WEB/mathlive/mathlive.min.js"
 
 node -e '
 const fs = require("fs");
