@@ -16,6 +16,7 @@ window.MathJax = {
       VTInstallSlashedMathJax();
       MathJax.startup.defaultReady();
       VTInstallSlashedSVG();
+      VTInstallWickSVG();
     },
   },
   loader: { paths: { mathjax: new URL('vendor/mathjax', document.baseURI).href } },

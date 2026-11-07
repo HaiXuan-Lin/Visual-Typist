@@ -3871,10 +3871,7 @@
     return next;
   }
 
-  /**
-   * One TeX expression for the whole document: several lines become a left-aligned array, or one
-   * aligned at = (see alignLines) whose first column ends where each line's relation starts.
-   */
+  /** The web edition's LaTeX file, as the app's (EquationDocument.standaloneTeX). */
   function standaloneTeX() {
     const packages = ['amsmath', 'amssymb', 'xcolor', 'fix-cm'];
     if (/\\(?:a|b)?contract(?:ion|ed)\b|\\nomathglue\b/.test(state.latex)) packages.push('simplewick');
@@ -3889,6 +3886,10 @@
       documentTeX(state.latex, state.displayStyle, state.alignment) + '$\n\\end{document}\n';
   }
 
+  /**
+   * One TeX expression for the whole document: several lines become a left-aligned array, or one
+   * aligned at = (see alignLines) whose first column ends where each line's relation starts.
+   */
   function documentTeX(latex, displayStyle, alignment = 'left') {
     // Trailing whitespace goes, except an escaped space (\ ) that the user typed.
     const trim = line => line.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, '');

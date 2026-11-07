@@ -21,17 +21,23 @@ window.VTInstallSlashedMathLive = ({ define, Atom, Box, Context, atoms }) => {
     render: (atom, parent) => {
       const context = new Context({ parent }, atom.style);
       const body = Atom.createBox(context, atom.body) || new Box(null);
-      const latex = atom.bodyToLatex({});
+      const latex = atom.bodyToLatex({}).trim();
       const slash = new Box(latex === 'f' ? 0xE020 : '/', { fontFamily: 'Main-Regular', classes: 'VT__slash ML__cmr' });
-      const g = VTSlash.geometry({ w: body.width, h: body.height, d: body.depth },
-        { w: slash.width, h: slash.height, d: slash.depth }, VTSlash.adjustment(latex));
-      slash.setStyle('position', 'relative'); slash.setStyle('left', g.x, 'em'); slash.setStyle('top', -g.y, 'em');
-      slash.setStyle('pointer-events', 'none');
-      const overlay = new Box(slash, { type: 'ignore' });
-      overlay.width = 0; overlay.setStyle('display', 'inline-block');
-      body.left = g.baseX;
-      const box = new Box([overlay, body], { type: 'ord', classes: 'VT__slashed' });
-      box.width = g.width; box.height = g.height; box.depth = g.depth;
+      const [dx, dy] = VTSlash.adjustment(latex);
+      // Up and down as the package places it, from MathLive's heights; across, from the argument's
+      // width as the browser draws it (MathLive's is no guide: an accent's, as patched, is an em too
+      // wide). The argument is centered in a box at least as wide as the slash, which has no
+      // width of its own and is placed in percent of that box's.
+      const { y } = VTSlash.geometry({ w: 0, h: body.height, d: body.depth }, { w: 0, h: slash.height, d: slash.depth }, [0, dy]);
+      const width = latex === 'f' ? 0 : slash.width; // TeX's negation glyph has no width.
+      for (const [property, value] of [['display', 'inline-block'], ['width', '0'], ['position', 'relative'],
+        ['left', `calc(${50 + 100 * dx}% - ${width / 2}em)`], ['top', `${-y}em`], ['pointer-events', 'none']]) slash.setStyle(property, value);
+      const argument = new Box(body);
+      for (const [property, value] of [['display', 'inline-flex'], ['align-items', 'baseline'], ['justify-content', 'center'], ['min-width', `${width}em`]]) argument.setStyle(property, value);
+      const box = new Box([slash, argument], { type: 'ord', classes: 'VT__slashed' });
+      box.setStyle('display', 'inline-block');
+      box.height = Math.max(body.height, slash.height + y);
+      box.depth = Math.max(body.depth, slash.depth - y);
       if (atom.caret) box.caret = atom.caret;
       return atom.bind(context, atom.attachSupsub(context, { base: box }).wrap(context));
     },
