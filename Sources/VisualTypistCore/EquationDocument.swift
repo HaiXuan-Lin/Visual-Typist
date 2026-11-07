@@ -143,6 +143,7 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}
         \\usepackage{fix-cm}
+        \\setcounter{MaxMatrixCols}{20}
         \\providecommand{\\placeholder}[1]{\\square}
         \\providecommand{\\vtraw}[1]{\\mathrm{#1}}
         \\definecolor{ink}{HTML}{\(color)}

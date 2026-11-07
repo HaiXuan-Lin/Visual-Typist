@@ -266,3 +266,14 @@ math-field::part(content) { overflow: visible; }
 
 /* The web edition (a browser, without the app) has no PDF export. */
 .web-edition #export-menu [data-format="pdf"] { display: none; }
+#matrix-dialog {
+  border: 1px solid var(--border, #aaa); border-radius: 12px; padding: 24px;
+  background: var(--bg, Canvas); color: var(--text, CanvasText); width: 320px;
+}
+#matrix-dialog::backdrop { background: #0005; }
+#matrix-dialog h2 { margin: 0 0 18px; font-size: 18px; }
+#matrix-dialog label { display: flex; justify-content: space-between; align-items: center; margin: 12px 0; }
+#matrix-dialog input, #matrix-dialog select { width: 110px; padding: 6px; font: inherit; }
+#matrix-dialog p { font-size: 12px; opacity: .7; }
+#matrix-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+#matrix-dialog button { padding: 7px 14px; }

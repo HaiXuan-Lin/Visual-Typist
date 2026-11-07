@@ -251,6 +251,7 @@
 
   function insertItem(item) {
     if (!item) return false;
+    if (item.action === 'matrix') return openMatrixDialog();
     if (codeFocused()) return insertIntoCode(item.latex);
     leaveSelectAll({ replace: !item.accent });
     const model = fieldModel();
@@ -267,6 +268,28 @@
     syncFromField();
     return true;
   }
+
+  let matrixTarget = null;
+  function openMatrixDialog() {
+    matrixTarget = codeFocused() ? codeArea : mathfield;
+    $('matrix-dialog').showModal();
+    $('matrix-rows').focus();
+    $('matrix-rows').select();
+    return true;
+  }
+  $('matrix-cancel').addEventListener('click', () => $('matrix-dialog').close());
+  $('matrix-dialog').addEventListener('close', () => matrixTarget?.focus());
+  $('matrix-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const rows = $('matrix-rows').valueAsNumber, cols = $('matrix-cols').valueAsNumber;
+    if (![rows, cols].every(n => Number.isInteger(n) && n >= 1 && n <= 20)) return;
+    const kind = $('matrix-kind').value;
+    const cells = Array.from({ length: rows }, (_, row) =>
+      Array.from({ length: cols }, (_, col) => row === 0 && col === 0 ? '#0' : '#?').join(' & '));
+    $('matrix-dialog').close();
+    matrixTarget?.focus();
+    insertLatex(`\\begin{${kind}} ${cells.join(' \\\\ ')} \\end{${kind}}`);
+  });
 
   /** Wraps the selection, or the one symbol (or structure) before the caret, in an accent. */
   function applyAccent(template, model, hadSelection) {
@@ -1062,6 +1085,7 @@
     (scratch ? document.body : fieldHost).insertBefore(field, scratch ? null : before);
     await mounted;
     field.menuItems = [];
+    field.maxMatrixCols = 20;
     field.mathModeSpace = '\\,\\,'; // Space, as classic editors write it.
     field.inlineShortcuts = INLINE_SHORTCUTS;
     field.macros = { ...field.macros, vtraw: RAW_MACRO };
@@ -2641,6 +2665,7 @@
   }
 
   function itemTitle(item) {
+    if (item.action === 'matrix') return 'Custom matrix — choose rows, columns and brackets';
     const keys = combosFor({ insert: item.id }).map(displayCombo);
     return `${item.latex.replace(/#[@0-9?]/g, '□')}${keys.length ? `  (${keys.join(', ')})` : ''}`;
   }
@@ -3695,6 +3720,7 @@
   // ---------------------------------------------------------------- keyboard
 
   window.addEventListener('keydown', event => {
+    if ($('matrix-dialog').open) return;
     if (recording) return handleRecordingKey(event);
     if (pendingFocus && !event.metaKey && !event.ctrlKey && !event.altKey && !composing &&
         !event.composedPath().includes(pendingFocus) && (event.key.length === 1 || event.key === 'Backspace')) {

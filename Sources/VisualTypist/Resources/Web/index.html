@@ -113,5 +113,19 @@
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
+  <dialog id="matrix-dialog" aria-labelledby="matrix-title">
+    <form id="matrix-form">
+      <h2 id="matrix-title">Custom Matrix</h2>
+      <label>Rows <input id="matrix-rows" type="number" min="1" max="20" step="1" value="2" required></label>
+      <label>Columns <input id="matrix-cols" type="number" min="1" max="20" step="1" value="2" required></label>
+      <label>Brackets <select id="matrix-kind">
+        <option value="pmatrix">( )</option><option value="bmatrix">[ ]</option>
+        <option value="Bmatrix">{ }</option><option value="vmatrix">| |</option>
+        <option value="Vmatrix">‖ ‖</option><option value="matrix">None</option>
+      </select></label>
+      <p>1–20 rows and columns. Tab moves between cells.</p>
+      <footer><button id="matrix-cancel" type="button">Cancel</button><button type="submit">Insert</button></footer>
+    </form>
+  </dialog>
 </body>
 </html>

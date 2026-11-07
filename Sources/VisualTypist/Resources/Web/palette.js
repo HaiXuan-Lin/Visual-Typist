@@ -181,6 +181,7 @@
     {
       id: 'matrices', size: 'large', title: 'Matrices & Arrays', icon: '\\left(\\begin{smallmatrix}\\square&\\square\\\\\\square&\\square\\end{smallmatrix}\\right)', tint: 'amber',
       items: [
+        ['custom-matrix', '', { action: 'matrix', preview: '\\begin{pmatrix}m\\times n\\end{pmatrix}' }],
         ['pmatrix', '\\begin{pmatrix} #0 & #1 \\\\ #2 & #3 \\end{pmatrix}'],
         ['bmatrix', '\\begin{bmatrix} #0 & #1 \\\\ #2 & #3 \\end{bmatrix}'],
         ['vmatrix', '\\begin{vmatrix} #0 & #1 \\\\ #2 & #3 \\end{vmatrix}'],

@@ -22,3 +22,12 @@ You need an Apple Silicon Mac with macOS 14 or later. In a terminal:
 `build.sh` examines the build environment and repairs what it can before compiling. It asks before anything that needs your password or a download. `install.sh` then copies the app into `/Applications` and opens it.
 
 The app is signed ad hoc for local use; it is not notarized.
+
+## Matrices
+
+In **Matrices & Arrays**, choose the **m × n** tile to insert a custom matrix with
+1–20 rows and columns and any of the six bracket styles. Tab and Shift-Tab move
+between cells. Existing fixed-size templates are still available. When copying a
+matrix wider than ten columns into another document, add
+\setcounter{MaxMatrixCols}{20} after loading amsmath; the Mac app's standalone
+LaTeX export includes this setting.
