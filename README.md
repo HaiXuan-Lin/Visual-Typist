@@ -31,3 +31,24 @@ between cells. Existing fixed-size templates are still available. When copying a
 matrix wider than ten columns into another document, add
 \setcounter{MaxMatrixCols}{20} after loading amsmath; the Mac app's standalone
 LaTeX export includes this setting.
+
+## Wick contractions
+
+The **Quantum Field Theory** palette inserts editable Wick pairs and crossed
+pairs. Type into each endpoint and use Tab to move to the next one. Both package
+syntaxes work in the canvas and in SVG/PNG/MathML exports:
+
+- simpler-wick: \wick{\c1 A\c2 B\c1 C\c2 D}, labels 1–9,
+  the shorthand \c, and local sep/offset lengths.
+- simplewick: \contraction, \acontraction, \bcontraction, with an optional
+  height and four arguments (prefix, left endpoint, middle, right endpoint).
+  These draw only the line; write the expression after them. The palette uses
+  \acontracted and \bcontracted, which also include the expression.
+
+LaTeX file exports include the required packages. Copied equation snippets need
+\usepackage{simplewick} or \usepackage{simpler-wick} in the destination preamble.
+The browser supports local lengths in em, ex, pt, mu, mm, cm and in; it does not
+interpret arbitrary TeX register expressions or global TikZ/package configuration.
+
+Run node scripts/test-wick.cjs for syntax checks. Tests/Fixtures/wick.tex exercises
+the corresponding real LaTeX packages (compile twice for TikZ positioning).

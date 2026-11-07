@@ -1,0 +1,17 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,simplewick,simpler-wick}
+\setcounter{MaxMatrixCols}{20}
+\begin{document}
+\[
+\begin{bmatrix}1&2&3&4&5&6&7&8&9&10&11&12\\13&14&15&16&17&18&19&20&21&22&23&24\end{bmatrix}
+\]
+\[
+\wick{\c1 A\c2 B\c1 C\c2 D}\qquad
+\wick[sep=4pt,offset=1.2em]{\c1{\psi(x)}\c2{\bar\psi(y)}\c2{\psi(z)}\c1{\bar\psi(w)}}
+\]
+\[
+\contraction{}{\psi}{(x)}{\bar\psi}\psi(x)\bar\psi(y)\qquad
+\acontraction[2ex]{}{A}{BC}{D}\bcontraction{A}{B}{}{C}ABCD\qquad
+\acontracted{}{A}{BC}{D}\quad\bcontracted{}{A}{BC}{D}
+\]
+\end{document}

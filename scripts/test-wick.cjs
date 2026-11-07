@@ -1,0 +1,21 @@
+// Pure syntax tests: node scripts/test-wick.cjs
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const sandbox = { window: {} };
+vm.runInNewContext(fs.readFileSync('Sources/VisualTypist/Resources/Web/wick.js', 'utf8'), sandbox);
+const { parse, options, dimension } = sandbox.window.VTWick;
+const crossed = parse('\\c1 A\\c2 B\\c1 C\\c2 D');
+assert.equal(crossed.body, '{A}{B}{C}{D}');
+assert.equal(crossed.pairs[0].middle, '{B}');
+assert.equal(crossed.pairs[1].prefix, '{A}');
+assert.equal(crossed.pairs[1].middle, '{C}');
+assert.equal(parse('\\c{\\psi(x)} \\c{\\bar{\\psi}(y)}').pairs[0].right, '\\bar{\\psi}(y)');
+assert.equal(parse('\\cos x+\\c0 A').body, '\\cos x+ A');
+assert.equal(parse('\\c1{\\{x\\}}\\c1 y').pairs[0].left, '\\{x\\}');
+assert.equal(parse('\\c1 A\\c1 B\\c1 C\\c1 D').pairs.length, 2);
+assert.equal(options('sep=4pt,offset=1.2em').sep, .4);
+assert.equal(dimension('2ex'), .862);
+for (const input of ['\\c1 A', '\\c1{A', '\\c1']) assert.throws(() => parse(input));
+for (const input of ['sep=oops', 'other=1em', 'sep=-1pt']) assert.throws(() => options(input));
+console.log('Wick syntax tests passed');

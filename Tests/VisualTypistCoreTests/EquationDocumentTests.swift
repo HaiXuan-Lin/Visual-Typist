@@ -3,6 +3,17 @@ import Testing
 @testable import VisualTypistCore
 
 struct EquationDocumentTests {
+    @Test func wickExportsLoadTheirPackagesAndImportAgain() throws {
+        for (latex, package) in [(#"\wick{\c1 A\c1 B}"#, "simpler-wick"),
+                                  (#"\bcontraction{}{A}{}{B}AB"#, "simplewick")] {
+            let document = EquationDocument(latex: latex)
+            let tex = document.standaloneTeX()
+            #expect(tex.contains("\\usepackage{\(package)}"))
+            #expect(try EquationDocument.read(data: Data(tex.utf8), fileExtension: "tex").latex == latex)
+        }
+        #expect(!EquationDocument(latex: "x").standaloneTeX().contains("simplewick"))
+    }
+
     @Test func roundTripPreservesEverySetting() throws {
         let document = EquationDocument(
             latex: "  \\begin{aligned}\nE &= mc^2 \\\\\np &= mv\n\\end{aligned}  ",

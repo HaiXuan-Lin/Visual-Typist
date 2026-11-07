@@ -139,10 +139,17 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         } else {
             body = "\\begin{array}{l}\n" + rows.map { $0.isEmpty ? #"\strut"# : rowStyle + $0 }.joined(separator: " \\\\\n") + "\n\\end{array}"
         }
+        var packages = ""
+        if latex.range(of: #"\\(?:a|b)?contract(?:ion|ed)\b|\\nomathglue\b"#, options: .regularExpression) != nil {
+            packages += "\\usepackage{simplewick}\n"
+        }
+        if latex.range(of: #"\\wick\b"#, options: .regularExpression) != nil {
+            packages += "\\usepackage{simpler-wick}\n"
+        }
         return """
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}
-        \\usepackage{fix-cm}
+        \(packages)\\usepackage{fix-cm}
         \\setcounter{MaxMatrixCols}{20}
         \\providecommand{\\placeholder}[1]{\\square}
         \\providecommand{\\vtraw}[1]{\\mathrm{#1}}

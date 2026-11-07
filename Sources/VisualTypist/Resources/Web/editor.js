@@ -1506,6 +1506,9 @@
     let changed = false;
     for (const atom of model.atoms) {
       if (atom.isRoot || atom.mode === 'text' || !atom.branches?.length) continue;
+      // Empty prefix/middle arguments of simplewick are spacing, not editable empty operands.
+      if (atom.type === 'group' && /^\\[ab]contracted$/.test(atom.parent?.command || '') &&
+          [0, 2].includes(atom.parent.body.filter(child => child.type !== 'first').indexOf(atom))) continue;
       const prescriptBase = atom.type === 'group' && atom.branches.some(branch => SCRIPT_BRANCHES.includes(branch));
       if (hasMiddle(atom)) {
         // Each slot between \middle separators gets its own placeholder.
@@ -3550,7 +3553,7 @@
           const format = payload.format;
           if (format === 'svg') download('Equation.svg', (await webSVG()).svg, 'image/svg+xml');
           else if (format === 'png') download('Equation.png', await webPNG(), 'image/png');
-          else if (format === 'latex') download('Equation.tex', state.latex + '\n', 'text/x-tex');
+          else if (format === 'latex') download('Equation.tex', standaloneTeX(), 'text/x-tex');
           else if (format === 'mathml') download('Equation.mml', (await webSVG()).mathml, 'application/mathml+xml');
           return;
         }
@@ -3872,6 +3875,18 @@
    * One TeX expression for the whole document: several lines become a left-aligned array, or one
    * aligned at = (see alignLines) whose first column ends where each line's relation starts.
    */
+  function standaloneTeX() {
+    const packages = ['amsmath', 'amssymb', 'xcolor', 'fix-cm'];
+    if (/\\(?:a|b)?contract(?:ion|ed)\b|\\nomathglue\b/.test(state.latex)) packages.push('simplewick');
+    if (/\\wick\b/.test(state.latex)) packages.push('simpler-wick');
+    return '\\documentclass[preview,border=2pt]{standalone}\n' +
+      '\\usepackage{' + packages.join(',') + '}\n\\setcounter{MaxMatrixCols}{20}\n' +
+      '\\providecommand{\\placeholder}[1]{\\square}\n\\providecommand{\\vtraw}[1]{\\mathrm{#1}}\n' +
+      '\\definecolor{ink}{HTML}{' + state.color.slice(1) + '}\n\\begin{document}\n' +
+      '\\color{ink}\\fontsize{' + state.fontSize + '}{' + state.fontSize * 1.2 + '}\\selectfont\n$' +
+      documentTeX(state.latex, state.displayStyle, state.alignment) + '$\n\\end{document}\n';
+  }
+
   function documentTeX(latex, displayStyle, alignment = 'left') {
     // Trailing whitespace goes, except an escaped space (\ ) that the user typed.
     const trim = line => line.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, '');

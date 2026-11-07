@@ -12,6 +12,7 @@ window.MathJax = {
       new CommandMap('vt-accents', { grave: ['Accent', '02CB'] }, MathJax._.input.tex.base.BaseMethods.default);
       Configuration.create('vt-accents', { handler: { macro: ['vt-accents'] }, priority: 1 });
       MathJax.config.tex.packages.push('vt-accents');
+      VTInstallWickMathJax();
       MathJax.startup.defaultReady();
     },
   },
