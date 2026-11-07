@@ -146,6 +146,9 @@ public struct EquationDocument: Codable, Equatable, Sendable {
         if latex.range(of: #"\\wick\b"#, options: .regularExpression) != nil {
             packages += "\\usepackage{simpler-wick}\n"
         }
+        if latex.range(of: #"\\slashed\b"#, options: .regularExpression) != nil {
+            packages += "\\usepackage{slashed}\n"
+        }
         return """
         \\documentclass[preview,border=2pt]{standalone}
         \\usepackage{amsmath,amssymb,xcolor}

@@ -3879,11 +3879,13 @@
     const packages = ['amsmath', 'amssymb', 'xcolor', 'fix-cm'];
     if (/\\(?:a|b)?contract(?:ion|ed)\b|\\nomathglue\b/.test(state.latex)) packages.push('simplewick');
     if (/\\wick\b/.test(state.latex)) packages.push('simpler-wick');
+    if (/\\slashed\b/.test(state.latex)) packages.push('slashed');
     return '\\documentclass[preview,border=2pt]{standalone}\n' +
       '\\usepackage{' + packages.join(',') + '}\n\\setcounter{MaxMatrixCols}{20}\n' +
       '\\providecommand{\\placeholder}[1]{\\square}\n\\providecommand{\\vtraw}[1]{\\mathrm{#1}}\n' +
       '\\definecolor{ink}{HTML}{' + state.color.slice(1) + '}\n\\begin{document}\n' +
-      '\\color{ink}\\fontsize{' + state.fontSize + '}{' + state.fontSize * 1.2 + '}\\selectfont\n$' +
+      '\\color{ink}\\fontsize{' + state.fontSize + '}{' + state.fontSize * 1.2 + '}\\selectfont\n' +
+      '\\everymath{' + (state.displayStyle ? '\\displaystyle' : '\\textstyle') + '}\n$' +
       documentTeX(state.latex, state.displayStyle, state.alignment) + '$\n\\end{document}\n';
   }
 

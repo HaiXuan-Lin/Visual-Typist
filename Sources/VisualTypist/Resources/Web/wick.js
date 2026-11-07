@@ -66,7 +66,9 @@ window.VTWick = (() => {
 })();
 
 // Called once from the pinned MathLive bundle. Keep the patch small; implement features here.
-window.VTInstallMathLive = ({ define, Atom, Box, Context, parse, atoms }) => {
+window.VTInstallMathLive = api => {
+  const { define, Atom, Box, Context, parse, atoms } = api;
+  window.VTInstallSlashedMathLive?.(api);
   const measured = (context, latex) => Atom.createBox(context, parse(latex, { context })) || new Box(null);
   const finish = (atom, context, box) => {
     if (atom.caret) box.caret = atom.caret;

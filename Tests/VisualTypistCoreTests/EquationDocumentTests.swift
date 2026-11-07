@@ -3,6 +3,14 @@ import Testing
 @testable import VisualTypistCore
 
 struct EquationDocumentTests {
+    @Test func slashedExportsIncludePackageAndPreserveCommand() throws {
+        let source = #"(i\slashed{\partial}-m)\psi=0"#
+        let tex = EquationDocument(latex: source).standaloneTeX()
+        #expect(tex.contains(#"\usepackage{slashed}"#))
+        #expect(try EquationDocument.read(data: Data(tex.utf8), fileExtension: "tex").latex == source)
+        #expect(!EquationDocument(latex: "p").standaloneTeX().contains("usepackage{slashed}"))
+    }
+
     @Test func wickExportsLoadTheirPackagesAndImportAgain() throws {
         for (latex, package) in [(#"\wick{\c1 A\c1 B}"#, "simpler-wick"),
                                   (#"\bcontraction{}{A}{}{B}AB"#, "simplewick")] {

@@ -203,6 +203,9 @@
     {
       id: 'physics', title: 'Quantum Field Theory', icon: '\\wick{\\c1 A\\c1 B}', tint: 'violet', size: 'large',
       items: [
+        ['slashed', '\\slashed{#0}', { preview: '\\slashed{p}' }],
+        ['slashed-partial', '\\slashed{\\partial}'],
+        ['slashed-D', '\\slashed{D}'],
         ['wick', '\\wick{\\c1{#0}\\c1{#1}}', { preview: '\\wick{\\c1 A\\c1 B}' }],
         ['wick-crossed', '\\wick{\\c1{#0}\\c2{#1}\\c1{#2}\\c2{#3}}', { preview: '\\wick{\\c1 A\\c2 B\\c1 C\\c2 D}' }],
         ['acontracted', '\\acontracted{}{#0}{}{#1}', { preview: '\\acontracted{}{A}{}{B}' }],

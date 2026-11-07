@@ -13,7 +13,9 @@ window.MathJax = {
       Configuration.create('vt-accents', { handler: { macro: ['vt-accents'] }, priority: 1 });
       MathJax.config.tex.packages.push('vt-accents');
       VTInstallWickMathJax();
+      VTInstallSlashedMathJax();
       MathJax.startup.defaultReady();
+      VTInstallSlashedSVG();
     },
   },
   loader: { paths: { mathjax: new URL('vendor/mathjax', document.baseURI).href } },

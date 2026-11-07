@@ -52,3 +52,20 @@ interpret arbitrary TeX register expressions or global TikZ/package configuratio
 
 Run node scripts/test-wick.cjs for syntax checks. Tests/Fixtures/wick.tex exercises
 the corresponding real LaTeX packages (compile twice for TikZ positioning).
+
+## Feynman slash
+
+Use the slash tile in **Quantum Field Theory**, or enter \slashed{p}, \slashed{D}
+or \slashed{\partial} in LaTeX. The argument remains editable and the slash scales
+with scripts and fractions. File exports load slashed automatically; copied
+snippets require \usepackage{slashed}. The editor implements \slashed and the
+package's standard glyph adjustments; custom \declareslashed definitions are not
+interpreted. Tests/Fixtures/slashed.tex covers the real package.
+
+For the browser regression suite, install Playwright (npm install --no-save
+playwright), build and serve the site with scripts/build-site.sh and
+python3 -m http.server 8765 --directory .site, then run
+node scripts/test-browser.cjs. Set VT_CHROME to an installed Chrome executable,
+or install Playwright's Chromium. VT_TEST_URL and VT_TEST_OUTPUT select the local
+server URL and output folder. The suite saves screenshots, SVGs and the downloaded
+Equation.tex for independent compilation.
