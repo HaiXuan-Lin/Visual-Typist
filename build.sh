@@ -294,10 +294,10 @@ check_dependencies() {
     download_vendor
     fixed "Math engines replaced with the pinned versions"
   elif ! vendor_intact; then
-    # A copy without the local fixes (scripts/patches) gets them; anything else is downloaded again.
+    # A copy without the local fixes (scripts/patches) gets them; anything else is downloaded again
+    # (a damaged copy, which a fix may not find its place in).
     warn "The bundled math engines do not match their checksums."
-    /usr/bin/python3 "$ROOT/scripts/patches/mathlive-boldsymbol.py" "$VENDOR_DIR/mathlive/mathlive.min.js" >/dev/null
-    /usr/bin/python3 "$ROOT/scripts/patches/mathlive-scripts.py" "$VENDOR_DIR/mathlive/mathlive.min.js" >/dev/null
+    PYTHON=/usr/bin/python3 "$ROOT/scripts/patches/apply.sh" "$VENDOR_DIR/mathlive/mathlive.min.js" >/dev/null 2>&1 || true
     if vendor_intact; then
       fixed "Local fixes applied to MathLive"
     else

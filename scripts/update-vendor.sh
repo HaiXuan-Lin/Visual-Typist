@@ -16,20 +16,13 @@ cp node_modules/mathjax-full/es5/tex-svg-full.js "$WEB/mathjax/"
 cp node_modules/mathjax-full/LICENSE "$WEB/mathjax/LICENSE.txt"
 
 # Local fixes to the bundled engines (see scripts/patches).
-python3 "$ROOT/scripts/patches/mathlive-boldsymbol.py" "$WEB/mathlive/mathlive.min.js"
-python3 "$ROOT/scripts/patches/mathlive-scripts.py" "$WEB/mathlive/mathlive.min.js"
-python3 "$ROOT/scripts/patches/mathlive-accents.py" "$WEB/mathlive/mathlive.min.js"
-python3 "$ROOT/scripts/patches/mathlive-arrows.py" "$WEB/mathlive/mathlive.min.js"
-python3 "$ROOT/scripts/patches/mathlive-clicks.py" "$WEB/mathlive/mathlive.min.js"
-python3 "$ROOT/scripts/patches/mathlive-delims.py" "$WEB/mathlive/mathlive.min.js"
+"$ROOT/scripts/patches/apply.sh" "$WEB/mathlive/mathlive.min.js"
 
 node -e '
 const fs = require("fs");
 const version = name => require(`./node_modules/${name}/package.json`).version;
 fs.writeFileSync(process.argv[1], JSON.stringify({ mathlive: version("mathlive"), mathjax: version("mathjax-full") }, null, 2) + "\n");
 ' "$WEB/versions.json"
-
-python3 "$ROOT/scripts/patches/mathlive-extensions.py" "$WEB/mathlive/mathlive.min.js"
 
 # Checksums of the bundled files, so that build.sh can tell a damaged or incomplete copy.
 (cd "$WEB" && find mathlive mathjax -type f | LC_ALL=C sort | xargs shasum -a 256) >"$WEB/checksums.sha256"
