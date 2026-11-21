@@ -2614,30 +2614,80 @@
     return (item.preview || item.latex).replace(/#@|#[0-9?]/g, '\\placeholder{}');
   }
 
-  /**
-   * MathJax's view box, widened to what it draws: it measures some accents and stretched arrows
-   * narrower than they are (the dots of \dddot over a slot, the head of \overrightarrow{x}), which
-   * the box would cut off. In the units of the view box; null without one.
-   */
   let measureHost = null;
-  function drawnBounds(svg) {
-    const bounds = svg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
-    if (!bounds || bounds.length !== 4 || !bounds.every(Number.isFinite)) return null;
+  /** An off-screen element that lays out what is put in it, to be measured. */
+  function offscreen() {
     if (!measureHost) {
       measureHost = document.createElement('div');
       measureHost.style.cssText = 'position:absolute;left:-10000px;top:0;visibility:hidden;pointer-events:none';
       document.body.append(measureHost);
     }
+    return measureHost;
+  }
+
+  /** The view box of a MathJax `svg` as [x, y, width, height]; null without one. */
+  function viewBoxOf(svg) {
+    const bounds = svg.getAttribute('viewBox')?.trim().split(/\s+/).map(Number);
+    return bounds?.length === 4 && bounds.every(Number.isFinite) ? bounds : null;
+  }
+
+  /**
+   * The box of what `svg` draws, in the units of its view box; null if it draws nothing. Not
+   * svg.getBBox(): MathJax draws a stretched delimiter (the bars of vmatrix) as a glyph scaled far
+   * past its size inside an inner svg that clips it, and getBBox ignores the clipping. Each shape
+   * is cut to the inner svgs around it instead.
+   */
+  function inkOf(svg) {
     const [parent, next] = [svg.parentNode, svg.nextSibling];
-    measureHost.append(svg);
-    let drawn = null;
-    try { drawn = svg.getBBox(); } catch (_) { /* Not rendered: keep MathJax's box. */ }
+    offscreen().append(svg);
+    let ink = null;
+    try {
+      const toRoot = svg.getScreenCTM().inverse();
+      // [left, top, right, bottom] in the root's units of a rectangle in `element`'s user space.
+      const inRoot = (element, [x, y, width, height]) => {
+        const matrix = toRoot.multiply(element.getScreenCTM());
+        const corners = [[x, y], [x + width, y], [x, y + height], [x + width, y + height]]
+          .map(([cx, cy]) => new DOMPoint(cx, cy).matrixTransform(matrix));
+        const xs = corners.map(point => point.x);
+        const ys = corners.map(point => point.y);
+        return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      };
+      for (const shape of svg.querySelectorAll('path, rect, line, polyline, polygon, circle, ellipse, text, image, use')) {
+        const own = shape.getBBox();
+        if (!(own.width > 0 || own.height > 0)) continue;
+        let [left, top, right, bottom] = inRoot(shape, [own.x, own.y, own.width, own.height]);
+        for (let inner = shape.parentElement.closest('svg'); inner && inner !== svg; inner = inner.parentElement.closest('svg')) {
+          if (getComputedStyle(inner).overflow === 'visible') continue;
+          const view = viewBoxOf(inner) || [0, 0, inner.width.baseVal.value, inner.height.baseVal.value];
+          const [clipLeft, clipTop, clipRight, clipBottom] = inRoot(inner, view);
+          [left, top] = [Math.max(left, clipLeft), Math.max(top, clipTop)];
+          [right, bottom] = [Math.min(right, clipRight), Math.min(bottom, clipBottom)];
+        }
+        if (right < left || bottom < top) continue; // Clipped away.
+        ink = ink
+          ? [Math.min(ink[0], left), Math.min(ink[1], top), Math.max(ink[2], right), Math.max(ink[3], bottom)]
+          : [left, top, right, bottom];
+      }
+    } catch (_) { ink = null; /* Not rendered. */ }
     if (parent) parent.insertBefore(svg, next); else svg.remove();
-    if (!(drawn?.width > 0 && drawn.height > 0)) return bounds;
+    return ink && ink[2] > ink[0] && ink[3] > ink[1] ? [ink[0], ink[1], ink[2] - ink[0], ink[3] - ink[1]] : null;
+  }
+
+  /**
+   * MathJax's view box, widened to what it draws: it measures some accents and stretched arrows
+   * narrower than they are (the dots of \dddot over a slot, the head of \overrightarrow{x}), which
+   * the box would cut off. In the units of the view box; null without one.
+   */
+  function drawnBounds(svg) {
+    const bounds = viewBoxOf(svg);
+    if (!bounds) return null;
+    const drawn = inkOf(svg);
+    if (!drawn) return bounds;
     const [x, y, width, height] = bounds;
-    const left = Math.min(x, drawn.x);
-    const top = Math.min(y, drawn.y);
-    return [left, top, Math.max(x + width, drawn.x + drawn.width) - left, Math.max(y + height, drawn.y + drawn.height) - top];
+    const [inkX, inkY, inkWidth, inkHeight] = drawn;
+    const left = Math.min(x, inkX);
+    const top = Math.min(y, inkY);
+    return [left, top, Math.max(x + width, inkX + inkWidth) - left, Math.max(y + height, inkY + inkHeight) - top];
   }
 
   /** Gives `svg` the view box `bounds`, keeping its scale and its baseline. */
@@ -2651,20 +2701,75 @@
     svg.style.verticalAlign = `${-(bounds[1] + bounds[3]) * exPerUnit}ex`;
   }
 
-  function glyph(latex) {
+  /** `latex` typeset by MathJax as an svg element; null if it cannot be. */
+  function typeset(latex) {
     try {
       resetTeXState();
       const output = MathJax.tex2svg(latex, { display: false, em: 16, ex: 7 });
       const svg = output.querySelector('svg');
-      if (svg && !output.querySelector('[data-mml-node="merror"]')) {
-        const bounds = drawnBounds(svg);
-        if (bounds) setBounds(svg, bounds);
-        return svg;
-      }
-    } catch (_) { /* Fall back to text below. */ }
+      if (svg && viewBoxOf(svg) && !output.querySelector('[data-mml-node="merror"]')) return svg;
+    } catch (_) { /* The caller falls back to text. */ }
+    return null;
+  }
+
+  function textGlyph(latex) {
     const span = document.createElement('span');
     span.textContent = latex;
     return span;
+  }
+
+  // Glyphs keep a margin of about a pixel around what they draw: a browser clips an svg to its box
+  // snapped to whole pixels, which shaves off strokes that run along the box's edge (the foot of
+  // \mathbb{R}, the bottom of \ominus or \bigcirc). In view box units, thousandths of an em.
+  const GLYPH_MARGIN = 50;
+
+  function glyph(latex) {
+    const svg = typeset(latex);
+    if (!svg) return textGlyph(latex);
+    const [x, y, width, height] = drawnBounds(svg);
+    setBounds(svg, [x - GLYPH_MARGIN, y - GLYPH_MARGIN, width + 2 * GLYPH_MARGIN, height + 2 * GLYPH_MARGIN]);
+    return svg;
+  }
+
+  /**
+   * Palette tiles draw every glyph at one size, TILE_EM pixels to the em, however wide it is: its
+   * column widens to fit (see .group). The math axis, where fraction bars, = and the middle of ∑
+   * sit, lies on the tile's centre line, so that the glyphs of a row share their axis and baseline;
+   * one that reaches far above or below the axis (\overset, \underbrace) moves just enough to stay
+   * within the `room` (pixels) its tile has, and one taller than that is centred in it.
+   */
+  const TILE_EM = 19;
+  const MATH_AXIS = -250; // In view box units: y runs down from the baseline.
+  function tileGlyph(latex, room) {
+    const svg = typeset(latex);
+    if (!svg) return textGlyph(latex);
+    const unitsPerPixel = 1000 / TILE_EM;
+    const [x, y, width, height] = inkOf(svg) || viewBoxOf(svg);
+    const top = y - GLYPH_MARGIN;
+    const bottom = y + height + GLYPH_MARGIN;
+    const span = Math.min(2 * Math.max(MATH_AXIS - top, bottom - MATH_AXIS), Math.max(room * unitsPerPixel, bottom - top));
+    const spanTop = Math.min(Math.max(MATH_AXIS - span / 2, bottom - span), top);
+    const spanWidth = width + 2 * GLYPH_MARGIN;
+    svg.setAttribute('viewBox', [x - GLYPH_MARGIN, spanTop, spanWidth, span].join(' '));
+    svg.setAttribute('width', `${spanWidth / unitsPerPixel}px`);
+    svg.setAttribute('height', `${span / unitsPerPixel}px`);
+    svg.removeAttribute('style'); // MathJax's vertical-align: the tile centres the glyph instead.
+    return svg;
+  }
+
+  /** The height in pixels that a palette tile gives its glyph, as the stylesheet lays the tile out. */
+  function tileRoom(large) {
+    const group = document.createElement('section');
+    group.className = large ? 'group large' : 'group';
+    group.style.setProperty('--columns', '1');
+    const tile = document.createElement('button');
+    tile.className = 'tile';
+    group.append(tile);
+    offscreen().append(group);
+    const style = getComputedStyle(tile);
+    const room = tile.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    group.remove();
+    return room;
   }
 
   function itemTitle(item) {
@@ -2675,6 +2780,7 @@
 
   /** All categories side by side in one horizontally scrolling strip; the tabs jump between them. */
   function renderPalette() {
+    const rooms = { small: tileRoom(false), large: tileRoom(true) };
     const groups = VT_PALETTE.map(category => {
       const group = document.createElement('section');
       group.className = 'group';
@@ -2690,7 +2796,7 @@
         const tile = document.createElement('button');
         tile.className = 'tile';
         tile.dataset.id = item.id;
-        tile.append(glyph((large ? '\\displaystyle ' : '') + previewLatex(item)));
+        tile.append(tileGlyph((large ? '\\displaystyle ' : '') + previewLatex(item), large ? rooms.large : rooms.small));
         const key = document.createElement('span');
         key.className = 'key';
         tile.append(key);

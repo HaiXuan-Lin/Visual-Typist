@@ -132,7 +132,7 @@ math-field::part(content) { overflow: visible; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 #tabs button { font-size: 14px; }
-#tabs button svg { max-height: 21px; max-width: 70px; overflow: visible; }
+#tabs button > svg { max-height: 21px; max-width: 70px; overflow: visible; }
 #tabs button:hover { color: var(--text); background: var(--button-hover); }
 #tabs button[aria-selected="true"] { color: var(--text); background: var(--page); border-color: var(--chrome-border); margin-bottom: -1px; }
 
@@ -141,8 +141,10 @@ math-field::part(content) { overflow: visible; }
   flex: 1; display: flex; align-items: flex-start; gap: 16px; padding: 12px 14px 14px;
   overflow-x: auto; overflow-y: hidden; background: var(--page); scroll-padding: 0 10px;
 }
+/* Glyphs are never shrunk to fit (they all have one size, see tileGlyph): a category's tiles widen to
+   fit its widest glyph. Its width being its max-content width, 1fr is the widest tile's width. */
 .group {
-  flex: none; display: grid; grid-template-columns: repeat(var(--columns), var(--tile-w));
+  flex: none; display: grid; grid-template-columns: repeat(var(--columns), minmax(var(--tile-w), 1fr));
   grid-template-rows: repeat(4, var(--tile-h)); gap: 1px; padding: 1px; border-radius: 7px; background: var(--tile-border);
 }
 .group[data-tint="blue"] { --tint: var(--tint-blue); }
@@ -150,8 +152,9 @@ math-field::part(content) { overflow: visible; }
 .group[data-tint="green"] { --tint: var(--tint-green); }
 .group[data-tint="violet"] { --tint: var(--tint-violet); }
 .group[data-tint="amber"] { --tint: var(--tint-amber); }
+/* The glyph is centred in the padding box, above the strip for the shortcut along the bottom edge. */
 .tile {
-  position: relative; width: 100%; height: 100%; border: 0; padding: 6px 7px 13px;
+  position: relative; width: 100%; height: 100%; border: 0; padding: 5px 8px 11px;
   background: var(--tint); color: var(--text); font-size: 16px;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
 }
@@ -159,13 +162,13 @@ math-field::part(content) { overflow: visible; }
 .tile:hover { filter: brightness(.95); }
 .tile:active { filter: brightness(.88); }
 :root[data-theme="dark"] .tile:hover { filter: brightness(1.2); } :root[data-theme="dark"] .tile:active { filter: brightness(1.35); }
-.tile svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+/* Only the glyph's own box: MathJax clips stretched delimiters with inner svgs, which must keep clipping. */
+.tile > svg { flex: none; overflow: visible; }
 /* Integrals, large operators, matrices: tiles two rows tall and half again as wide, display style. */
 .group.large {
-  grid-template-columns: repeat(var(--columns), calc(var(--tile-w) * 1.5));
+  grid-template-columns: repeat(var(--columns), minmax(calc(var(--tile-w) * 1.5), 1fr));
   grid-template-rows: repeat(2, calc(var(--tile-h) * 2 + 1px));
 }
-.group.large .tile { font-size: 20px; padding: 8px 9px 15px; }
 /* The shortcut sits in its own strip along the bottom edge, below the glyph's padding box. */
 .tile .key {
   position: absolute; left: 2px; right: 3px; bottom: 1px; text-align: right;
@@ -212,7 +215,7 @@ math-field::part(content) { overflow: visible; }
   flex: 1; display: flex; align-items: center; justify-content: center; min-height: 48px; padding: 5px 8px;
   background: #f3e6ea; color: #17191d; font-size: 18px;
 }
-.cand-glyph svg { max-height: 40px; max-width: 120px; }
+.cand-glyph > svg { max-height: 40px; max-width: 120px; overflow: visible; }
 .cand.current .cand-label { background: #8d5c1f; }
 .cand.current .cand-glyph, .cand:hover .cand-glyph { background: #e7d1d9; }
 .cand-more { display: flex; align-items: center; padding: 0 7px; background: #6b4518; color: #fff; font-size: 12px; }
@@ -246,7 +249,7 @@ math-field::part(content) { overflow: visible; }
 .shortcut-row { display: grid; grid-template-columns: 64px 1fr auto 24px; align-items: center; gap: 8px; padding: 4px 8px; border-bottom: 1px solid var(--chrome-border); }
 .shortcut-row:last-child { border-bottom: 0; }
 .shortcut-row .glyph { display: flex; justify-content: center; font-size: 14px; }
-.shortcut-row .glyph svg { max-width: 60px; max-height: 30px; }
+.shortcut-row .glyph > svg { max-width: 60px; max-height: 30px; overflow: visible; }
 .shortcut-row .name { color: var(--secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .keycap { min-width: 70px; padding: 2px 10px; border: 1px solid var(--chrome-border); border-radius: 5px; background: var(--pane); font-size: 13px; }
 .keycap.recording { border-color: var(--accent); color: var(--accent); }

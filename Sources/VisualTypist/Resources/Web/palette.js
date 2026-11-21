@@ -141,8 +141,6 @@
         ['int-limits', '\\int_{#?}^{#?}{#0}', { caret: 'lower', caretWithSelection: 'lower' }],
         ['int-full', '\\int_{#?}^{#?}{#0}\\,\\mathrm{d}#?', { caret: 'lower', caretWithSelection: 'lower' }],
         ['int-indefinite', '\\int #0 \\,\\mathrm{d}#1'],
-        ['iint-region', '\\iint_{#?}{#0}\\,\\mathrm{d}A', { caret: 'lower', caretWithSelection: 'lower' }],
-        ['iiint-region', '\\iiint_{#?}{#0}\\,\\mathrm{d}V', { caret: 'lower', caretWithSelection: 'lower' }],
         ['oint-contour', '\\oint_{#?}{#0}\\,\\mathrm{d}#?', { caret: 'lower', caretWithSelection: 'lower' }],
         ['derivative', '\\frac{\\mathrm{d}#0}{\\mathrm{d}#1}'],
         ['partial-derivative', '\\frac{\\partial #0}{\\partial #1}'],
@@ -193,7 +191,10 @@
         ['column-2', '\\begin{pmatrix} #0 \\\\ #1 \\end{pmatrix}'],
         ['column-3', '\\begin{pmatrix} #0 \\\\ #1 \\\\ #2 \\end{pmatrix}'],
         ['row-3', '\\begin{pmatrix} #0 & #1 & #2 \\end{pmatrix}'],
-        ['general-matrix', '\\begin{pmatrix} a_{11} & \\cdots & a_{1n} \\\\ \\vdots & \\ddots & \\vdots \\\\ a_{m1} & \\cdots & a_{mn} \\end{pmatrix}'],
+        // TeX's \vdots stands taller than its dots; smashed, the tile is as tall as the other 3×3 matrices'.
+        ['general-matrix', '\\begin{pmatrix} #0 & \\cdots & #1 \\\\ \\vdots & \\ddots & \\vdots \\\\ #2 & \\cdots & #3 \\end{pmatrix}', {
+          preview: '\\begin{pmatrix} #0 & \\cdots & #1 \\\\ \\smash[t]{\\vdots} & \\smash[t]{\\ddots} & \\smash[t]{\\vdots} \\\\ #2 & \\cdots & #3 \\end{pmatrix}',
+        }],
         ['cases', '\\begin{cases} #0 & #1 \\\\ #2 & #3 \\end{cases}'],
         ['cases-3', '\\begin{cases} #0 & #1 \\\\ #2 & #3 \\\\ #4 & #5 \\end{cases}'],
         ['aligned', '\\begin{aligned} #0 &= #1 \\\\ #2 &= #3 \\end{aligned}'],
